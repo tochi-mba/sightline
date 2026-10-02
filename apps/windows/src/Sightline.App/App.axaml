@@ -1,0 +1,24 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="Sightline.App.SightlineApplication"
+             RequestedThemeVariant="Dark">
+
+  <!--
+    Resources before styles, and the order is load-bearing: Avalonia builds this file top to
+    bottom, and RexStyles looks the palette up with StaticResource as it loads. Declared the other
+    way round, the app dies on start with "Static resource 'InkBrush' not found".
+  -->
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <ResourceInclude Source="avares://Sightline/Theme/RexColors.axaml" />
+      </ResourceDictionary.MergedDictionaries>
+    </ResourceDictionary>
+  </Application.Resources>
+
+  <Application.Styles>
+    <FluentTheme />
+    <StyleInclude Source="avares://Sightline/Theme/RexStyles.axaml" />
+  </Application.Styles>
+
+</Application>

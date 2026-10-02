@@ -149,6 +149,27 @@ public sealed class GpSockConnectionTests
     }
 
     [Fact]
+    public async Task Commands_sent_at_the_same_moment_each_get_their_own_answer()
+    {
+        // The live view starts the stream while a person presses the shutter, both down one socket.
+        // Each must read the answer to its own command, not the other's.
+        var (connection, camera) = await OpenAsync(c => c.FileCount = 4);
+        await connection.SetModeAsync(CameraMode.Browse, CancellationToken.None);
+
+        var asks = Enumerable.Range(0, 20).Select(i => i % 2 == 0
+            ? connection.AskAsync(GpSockCommand.GetDeviceStatus, default, CancellationToken.None)
+            : connection.AskAsync(GpSockCommand.PlaybackGetFileCount, default, CancellationToken.None));
+        var answers = await Task.WhenAll(asks);
+
+        for (var i = 0; i < answers.Length; i++)
+        {
+            answers[i].Command.ShouldBe(i % 2 == 0 ? GpSockCommand.GetDeviceStatus : GpSockCommand.PlaybackGetFileCount);
+        }
+
+        camera.IsConnected.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task Every_refusal_code_turns_into_a_sentence_rather_than_a_number()
     {
         foreach (var code in Enum.GetValues<NakCode>())

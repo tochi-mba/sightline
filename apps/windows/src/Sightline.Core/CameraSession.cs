@@ -86,63 +86,144 @@ public sealed class CameraSession : IAsyncDisposable
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
-
-        await Control.StartStreamingAsync(deadline.Token).ConfigureAwait(false);
-
-        await using var rtsp = new RtspClient(transports(RtspClient.Port), host);
-        await rtsp.ConnectAsync(deadline.Token).ConfigureAwait(false);
-        await rtsp.DescribeAsync(deadline.Token).ConfigureAwait(false);
-        var setup = await rtsp.SetupVideoAsync(deadline.Token).ConfigureAwait(false);
-        if (!setup.IsSuccess)
-        {
-            throw new RtspException($"The camera refused the video track ({setup.StatusCode}).");
-        }
-
-        var play = await rtsp.PlayAsync(deadline.Token).ConfigureAwait(false);
-        if (!play.IsSuccess)
-        {
-            throw new RtspException($"The camera would not start the stream ({play.StatusCode}).");
-        }
-
-        var reassembler = new RtpJpegReassembler();
         try
         {
-            while (true)
+            // Returning from inside the loop disposes the stream, which is what sends its TEARDOWN.
+            await foreach (var frame in StreamFramesAsync(deadline.Token).ConfigureAwait(false))
             {
-                var bytes = await rtsp.ReadStreamAsync(deadline.Token).ConfigureAwait(false);
+                return frame;
+            }
+        }
+        catch (Exception exception) when (!cancellationToken.IsCancellationRequested
+                                          && exception is OperationCanceledException or TimeoutException)
+        {
+            throw new TimeoutException($"No whole picture arrived within {timeout.TotalSeconds:0} seconds.", exception);
+        }
+
+        throw new RtspException("The camera stopped sending before a whole picture arrived.");
+    }
+
+    /// <summary>
+    /// The live picture, frame after frame, until cancelled or the camera stops.
+    /// </summary>
+    /// <remarks>
+    /// The stream is started on the control channel first, for the reason
+    /// <see cref="GrabFrameAsync"/> gives. Frames that are not whole JPEGs are skipped rather than
+    /// passed on, so a consumer can decode everything it receives.
+    /// </remarks>
+    /// <param name="cancellationToken">Stops the stream.</param>
+    public async IAsyncEnumerable<CameraFrame> StreamFramesAsync(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await using var rtsp = new RtspClient(transports(RtspClient.Port), host);
+        try
+        {
+            await StartStreamAsync(rtsp, cancellationToken).ConfigureAwait(false);
+
+            var reassembler = new RtpJpegReassembler();
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var bytes = await ReadOrStallAsync(rtsp, cancellationToken).ConfigureAwait(false);
                 if (bytes.IsEmpty)
                 {
-                    throw new RtspException("The camera stopped sending before a whole picture arrived.");
+                    yield break;
                 }
 
                 foreach (var frame in reassembler.Push(bytes.Span))
                 {
                     if (RtpJpegReassembler.LooksLikeJpeg(frame.Jpeg))
                     {
-                        await TryTeardownAsync(rtsp).ConfigureAwait(false);
-                        return frame;
+                        yield return frame;
                     }
                 }
             }
         }
+        finally
+        {
+            // On every way out - cancelled, failed, or the consumer simply stopped iterating. The
+            // camera's RTSP server is single-threaded and does not reap an abandoned session: one
+            // left without a TEARDOWN stops it answering anybody until the camera is restarted,
+            // and putting its Wi-Fi to sleep and back does not clear it. Found the hard way.
+            await TryTeardownAsync(rtsp).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>How long the stream may take to start before it is called stuck.</summary>
+    public static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>How long the stream may go silent before it is called stopped.</summary>
+    /// <remarks>At about 12 pictures a second, this is many dozens of missing frames.</remarks>
+    public static readonly TimeSpan StallTimeout = TimeSpan.FromSeconds(8);
+
+    /// <summary>
+    /// Starts the media flow and negotiates the stream, all within <see cref="StartTimeout"/>.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the iterator because C# will not yield inside a try with a catch, and turning a
+    /// silent hang into a <see cref="TimeoutException"/> needs one. Without a deadline, a camera that
+    /// never acknowledges the start leaves a live view black forever with nothing said.
+    /// </remarks>
+    private async Task StartStreamAsync(RtspClient rtsp, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(StartTimeout);
+        try
+        {
+            await Control.StartStreamingAsync(deadline.Token).ConfigureAwait(false);
+            await rtsp.ConnectAsync(deadline.Token).ConfigureAwait(false);
+            await rtsp.DescribeAsync(deadline.Token).ConfigureAwait(false);
+            var setup = await rtsp.SetupVideoAsync(deadline.Token).ConfigureAwait(false);
+            if (!setup.IsSuccess)
+            {
+                throw new RtspException($"The camera refused the video track ({setup.StatusCode}).");
+            }
+
+            var play = await rtsp.PlayAsync(deadline.Token).ConfigureAwait(false);
+            if (!play.IsSuccess)
+            {
+                throw new RtspException($"The camera would not start the stream ({play.StatusCode}).");
+            }
+        }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new TimeoutException($"No whole picture arrived within {timeout.TotalSeconds:0} seconds.");
+            throw new TimeoutException(
+                $"The camera did not start its stream within {StartTimeout.TotalSeconds:0} seconds.");
+        }
+    }
+
+    private static async Task<ReadOnlyMemory<byte>> ReadOrStallAsync(RtspClient rtsp, CancellationToken cancellationToken)
+    {
+        using var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        stall.CancelAfter(StallTimeout);
+        try
+        {
+            return await rtsp.ReadStreamAsync(stall.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"The camera sent nothing for {StallTimeout.TotalSeconds:0} seconds.");
         }
     }
 
     private static async Task TryTeardownAsync(RtspClient rtsp)
     {
+        if (rtsp.Session is null)
+        {
+            // SETUP never succeeded, so there is no session on the camera to end.
+            return;
+        }
+
         try
         {
             using var shortly = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             await rtsp.TeardownAsync(shortly.Token).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or OperationCanceledException or RtspException
-                                              or System.Net.Sockets.SocketException)
+                                              or System.Net.Sockets.SocketException or InvalidOperationException)
         {
-            // The picture is already in hand; a camera that does not answer the goodbye is not a
-            // reason to throw it away.
+            // Best effort, and it runs from a finally: throwing here would replace whatever error
+            // brought the stream down with a less useful one about saying goodbye.
         }
     }
 

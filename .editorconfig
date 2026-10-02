@@ -46,8 +46,10 @@ dotnet_diagnostic.IDE0051.severity = warning
 dotnet_diagnostic.IDE0052.severity = warning
 dotnet_diagnostic.CA1812.severity = warning
 
-# CA1859 trades an interface for a concrete type to save a virtual call; seams here are interfaces
-# so tests can substitute them, which is the whole point of the design.
+# CA1859 and CA1826 trade an interface for a concrete type to save a virtual call. Seams here are
+# interfaces so tests can substitute them, which is the whole point of the design, and for the lists
+# this code passes LINQ already takes the indexed path. Same decision as REX Technologies' Flint.
 dotnet_diagnostic.CA1859.severity = none
+dotnet_diagnostic.CA1826.severity = none
 # CA1716 protects callers in other .NET languages; Sightline publishes no library.
 dotnet_diagnostic.CA1716.severity = none

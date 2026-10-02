@@ -36,6 +36,44 @@ public static class WindowsWifi
     public static IReadOnlyList<WifiAdapter> Adapters() => ParseInterfaces(Run("wlan show interfaces"));
 
     /// <summary>
+    /// Camera networks in range of <paramref name="adapter"/>, so nobody has to type the name.
+    /// </summary>
+    /// <param name="adapter">The adapter to look with; Windows' choice when omitted.</param>
+    /// <param name="prefix">What a camera network's name starts with.</param>
+    public static IReadOnlyList<string> CamerasInRange(string? adapter, string prefix) =>
+        ParseNetworkNames(Run(adapter is null ? "wlan show networks" : $"wlan show networks interface=\"{adapter}\""))
+            .Where(name => name.StartsWith(prefix, StringComparison.Ordinal))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+    /// <summary>
+    /// The network names in <c>netsh wlan show networks</c> output.
+    /// </summary>
+    /// <remarks>Public so the parsing is tested against real captured output.</remarks>
+    public static IReadOnlyList<string> ParseNetworkNames(string output)
+    {
+        var names = new List<string>();
+        foreach (var raw in (output ?? "").Split('\n'))
+        {
+            var line = raw.Trim();
+            // "SSID 3 : Access1". Not "BSSID 1 : ...", which is an access point's hardware address.
+            if (!line.StartsWith("SSID ", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var colon = line.IndexOf(':', StringComparison.Ordinal);
+            var name = colon < 0 ? "" : line[(colon + 1)..].Trim();
+            if (name.Length > 0)
+            {
+                names.Add(name);
+            }
+        }
+
+        return names;
+    }
+
+    /// <summary>
     /// Reads <c>netsh wlan show interfaces</c> output.
     /// </summary>
     /// <remarks>Public so the parsing is tested against real captured output.</remarks>

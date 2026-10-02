@@ -1,0 +1,42 @@
+<ResourceDictionary xmlns="https://github.com/avaloniaui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!--
+    The REX Technologies ink/signal palette, the same values as every REX product: Flint, textwire,
+    LUCY's site. Do not re-pick them and do not add a light variant. REX is dark by design, and a
+    camera app especially should not glare at somebody filming at night.
+  -->
+
+  <!-- Page ground. Near-black with a green cast, never pure #000. -->
+  <Color x:Key="InkColor">#080A09</Color>
+  <!-- Card surface, one step off the ground. -->
+  <Color x:Key="PanelColor">#111512</Color>
+  <!-- A panel inside a panel. -->
+  <Color x:Key="RaisedColor">#181E19</Color>
+  <!-- Hairlines. Always 1px. -->
+  <Color x:Key="LineColor">#29302A</Color>
+  <!-- Primary text. Warm off-white, never pure #FFF. -->
+  <Color x:Key="TextColor">#F2F5EE</Color>
+  <!-- Secondary text and anything inactive. -->
+  <Color x:Key="MutedColor">#858D83</Color>
+  <!-- The accent: ready, primary, live. Used sparingly so it earns attention. -->
+  <Color x:Key="SignalColor">#D7FF3F</Color>
+  <!-- Recording and errors. The only warm colour in the system. -->
+  <Color x:Key="LiveColor">#FF774D</Color>
+
+  <SolidColorBrush x:Key="InkBrush" Color="{StaticResource InkColor}" />
+  <SolidColorBrush x:Key="PanelBrush" Color="{StaticResource PanelColor}" />
+  <SolidColorBrush x:Key="RaisedBrush" Color="{StaticResource RaisedColor}" />
+  <SolidColorBrush x:Key="LineBrush" Color="{StaticResource LineColor}" />
+  <SolidColorBrush x:Key="TextBrush" Color="{StaticResource TextColor}" />
+  <SolidColorBrush x:Key="MutedBrush" Color="{StaticResource MutedColor}" />
+  <SolidColorBrush x:Key="SignalBrush" Color="{StaticResource SignalColor}" />
+  <SolidColorBrush x:Key="LiveBrush" Color="{StaticResource LiveColor}" />
+  <SolidColorBrush x:Key="SignalWashBrush" Color="{StaticResource SignalColor}" Opacity="0.10" />
+  <SolidColorBrush x:Key="LiveWashBrush" Color="{StaticResource LiveColor}" Opacity="0.12" />
+
+  <CornerRadius x:Key="RadiusSmall">8</CornerRadius>
+  <CornerRadius x:Key="RadiusMedium">12</CornerRadius>
+  <CornerRadius x:Key="RadiusLarge">18</CornerRadius>
+
+</ResourceDictionary>

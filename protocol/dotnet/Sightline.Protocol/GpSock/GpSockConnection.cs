@@ -36,6 +36,16 @@ public sealed class GpSockConnection : IAsyncDisposable
     private readonly byte[] receiveBuffer = new byte[8192];
     private readonly List<byte> pending = [];
 
+    /// <summary>
+    /// One request in flight at a time.
+    /// </summary>
+    /// <remarks>
+    /// An app sends a shutter press while the live view is still starting the stream, and both go
+    /// down this one socket. Without this, the two requests interleave and each reads the other's
+    /// answer — the camera did both things and the app reports the wrong outcome for each.
+    /// </remarks>
+    private readonly SemaphoreSlim oneAtATime = new(1, 1);
+
     /// <summary>Wraps a transport that is already connected, or about to be.</summary>
     public GpSockConnection(ICameraTransport transport)
     {
@@ -56,9 +66,17 @@ public sealed class GpSockConnection : IAsyncDisposable
         ReadOnlyMemory<byte> payload = default,
         CancellationToken cancellationToken = default)
     {
-        await transport.SendAsync(GpSockFrame.Encode(command, payload.Span), cancellationToken)
-            .ConfigureAwait(false);
-        return await ReadFrameAsync(cancellationToken).ConfigureAwait(false);
+        await oneAtATime.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await transport.SendAsync(GpSockFrame.Encode(command, payload.Span), cancellationToken)
+                .ConfigureAwait(false);
+            return await ReadFrameAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            oneAtATime.Release();
+        }
     }
 
     /// <summary>
@@ -79,25 +97,33 @@ public sealed class GpSockConnection : IAsyncDisposable
         IProgress<int>? onProgress = null,
         CancellationToken cancellationToken = default)
     {
-        await transport.SendAsync(GpSockFrame.Encode(command, payload.Span), cancellationToken)
-            .ConfigureAwait(false);
-
-        var gathered = new List<byte>();
-        while (true)
+        await oneAtATime.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            var response = await ReadFrameAsync(cancellationToken).ConfigureAwait(false);
-            if (response.Type == GpSockType.Nak)
-            {
-                throw new GpSockRefusedException(command, response.Nak);
-            }
+            await transport.SendAsync(GpSockFrame.Encode(command, payload.Span), cancellationToken)
+                .ConfigureAwait(false);
 
-            if (response.IsEndOfChunks)
+            var gathered = new List<byte>();
+            while (true)
             {
-                return [.. gathered];
-            }
+                var response = await ReadFrameAsync(cancellationToken).ConfigureAwait(false);
+                if (response.Type == GpSockType.Nak)
+                {
+                    throw new GpSockRefusedException(command, response.Nak);
+                }
 
-            gathered.AddRange(response.Payload);
-            onProgress?.Report(gathered.Count);
+                if (response.IsEndOfChunks)
+                {
+                    return [.. gathered];
+                }
+
+                gathered.AddRange(response.Payload);
+                onProgress?.Report(gathered.Count);
+            }
+        }
+        finally
+        {
+            oneAtATime.Release();
         }
     }
 
@@ -202,7 +228,11 @@ public sealed class GpSockConnection : IAsyncDisposable
     /// This is not free: the camera stops recording and tears down the stream when it happens. It
     /// belongs at the end of a session and nowhere else.
     /// </remarks>
-    public ValueTask DisposeAsync() => transport.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await transport.DisposeAsync().ConfigureAwait(false);
+        oneAtATime.Dispose();
+    }
 }
 
 /// <summary>The camera refused a command, and said why.</summary>

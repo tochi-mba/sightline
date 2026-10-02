@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- Windows-only: joining Wi-Fi goes through netsh, and the app ships as a Windows installer. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>Sightline.App</RootNamespace>
+    <AssemblyName>Sightline</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <Description>Sightline for Windows: live view and control for Wi-Fi action cameras.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Themes.Fluent" />
+    <PackageReference Include="Avalonia.Fonts.Inter" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../../protocol/dotnet/Sightline.Protocol/Sightline.Protocol.csproj" />
+    <ProjectReference Include="../Sightline.Core/Sightline.Core.csproj" />
+  </ItemGroup>
+
+</Project>
