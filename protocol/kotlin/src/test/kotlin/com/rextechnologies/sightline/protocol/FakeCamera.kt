@@ -6,6 +6,7 @@ import com.rextechnologies.sightline.protocol.gpsock.GpSockConnection
 import com.rextechnologies.sightline.protocol.gpsock.GpSockFrame
 import com.rextechnologies.sightline.protocol.gpsock.GpSockType
 import com.rextechnologies.sightline.protocol.gpsock.NakCode
+import kotlinx.coroutines.yield
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
@@ -23,6 +24,13 @@ class FakeCamera : CameraTransport {
 
     /** How many bytes at a time this camera will hand over; 0 means all of them. */
     var dribbleBytes = 0
+
+    /**
+     * When set, every read lets other coroutines run before it hands anything over, as a read from a
+     * real socket waits on the network. With [dribbleBytes], this is what lets two requests sharing
+     * the connection interleave the way they would on a real link.
+     */
+    var answersSlowly = false
 
     /**
      * When set, the camera accepts commands and never answers, as one that has gone does.
@@ -105,6 +113,10 @@ class FakeCamera : CameraTransport {
     }
 
     override suspend fun receive(into: ByteArray): Int {
+        if (answersSlowly) {
+            yield()
+        }
+
         val next = outbox.removeFirstOrNull() ?: return 0
         var take = if (dribbleBytes > 0) minOf(dribbleBytes, next.size) else next.size
         take = minOf(take, into.size)
