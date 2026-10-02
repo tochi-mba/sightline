@@ -34,3 +34,4 @@ protocol as measured on real hardware.
 | --- | --- |
 | `dotnet build Sightline.slnx` | Builds the protocol, core and command line. |
 | `dotnet test Sightline.slnx` | Runs every .NET test. |
+| `./gradlew :protocol:check` | Lints and tests the Kotlin protocol, and holds it to 100% line and branch coverage. |

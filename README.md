@@ -38,7 +38,7 @@ Wi-Fi button to wake it.
 
 | Path | What |
 | --- | --- |
-| `protocol/` | The wire protocol in C# (and soon Kotlin), with golden vectors from a real camera. |
+| `protocol/` | The wire protocol in C# and Kotlin, both held to the same golden vectors from a real camera. |
 | `apps/windows/` | The shared core, the `sightline` command, and the Windows app. |
 | `apps/android/` | The Android app. |
 | `docs/` | Architecture, the protocol as measured, acceptance, decisions. |
