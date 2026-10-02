@@ -1,9 +1,14 @@
 package com.rextechnologies.sightline.protocol.gpsock
 
 import com.rextechnologies.sightline.protocol.FakeCamera
+import com.rextechnologies.sightline.protocol.bytes
+import com.rextechnologies.sightline.protocol.gpSockResponse
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
@@ -128,6 +133,34 @@ class GpSockConnectionTest {
         val refused = assertFailsWith<GpSockRefusedException> { connection.demand(GpSockCommand.PowerOff) }
 
         assertEquals(NakCode.InvalidCommand, refused.reason)
+    }
+
+    @Test
+    fun `a leftover answer to an abandoned request is skipped, not taken as the reply`(): Unit = runBlocking {
+        val (connection, camera) = open()
+        camera.strayFramesBeforeNextAnswer +=
+            gpSockResponse(GpSockType.Ack.code, GpSockCommand.PlaybackGetRawData.code, bytes(1, 2, 3))
+
+        val status = connection.getStatus()
+
+        assertEquals(16, status.length)
+        assertEquals(1, connection.staleFramesSkipped)
+    }
+
+    @Test
+    fun `the answer to a request given up on is skipped by the request after it`(): Unit = runBlocking {
+        // A caller that stops waiting, cancelled or timed out, leaves its answer on the way. The next
+        // request must not take that answer for its own.
+        val (connection, _) = open { answersSlowly = true }
+        val abandoned = launch { connection.ask(GpSockCommand.GetDeviceStatus) }
+        // Sent, and waiting for the answer.
+        yield()
+        abandoned.cancelAndJoin()
+
+        val answer = connection.ask(GpSockCommand.CapturePicture)
+
+        assertEquals(GpSockCommand.CapturePicture, answer.command)
+        assertEquals(1, connection.staleFramesSkipped)
     }
 
     @Test

@@ -81,6 +81,9 @@ class FakeCamera : CameraTransport {
      */
     val answers = mutableMapOf<GpSockCommand, ByteArray>()
 
+    /** Frames to send before the answer to the next command, as leftovers from earlier requests. */
+    val strayFramesBeforeNextAnswer = mutableListOf<ByteArray>()
+
     override var isConnected = false
         private set
 
@@ -106,9 +109,13 @@ class FakeCamera : CameraTransport {
             val command = ((frame[10].toInt() and 0xFF) shl 8) or (frame[11].toInt() and 0xFF)
             val payload = frame.copyOfRange(GpSockFrame.REQUEST_HEADER_LENGTH, frame.size)
             inbox.clear()
-            if (!hangsUp) {
-                handle(command, payload)
+            if (hangsUp) {
+                continue
             }
+
+            outbox.addAll(strayFramesBeforeNextAnswer)
+            strayFramesBeforeNextAnswer.clear()
+            handle(command, payload)
         }
     }
 
