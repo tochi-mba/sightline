@@ -257,7 +257,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
 
         var version = menu.Find(0x0209)?.Choices.FirstOrDefault().Label;
-        CameraSummary = $"{status.Mode} mode · {(status.IsCharging ? "on external power" : "on battery")}"
+        CameraSummary = $"{status.Mode} mode · {(status.OnExternalPower ? "on external power" : "on battery")}"
             + (version is null ? "" : $" · firmware {version}");
     }
 

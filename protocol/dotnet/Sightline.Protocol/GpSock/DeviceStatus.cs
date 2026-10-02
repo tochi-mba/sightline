@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+
 namespace Sightline.Protocol.GpSock;
 
 /// <summary>
@@ -6,16 +8,15 @@ namespace Sightline.Protocol.GpSock;
 /// <remarks>
 /// <para>
 /// Only the fields this project has actually pinned down are exposed as values. The reference
-/// camera (firmware 20240708 V1.3) answers with <b>16</b> bytes, while the vendor documentation
-/// for a later build describes <b>20</b>, and the two do not agree past the first few fields.
-/// Decoding the rest from that documentation would mean showing somebody a battery percentage or
-/// a free-space figure that is simply a different field misread — worse than showing nothing.
+/// camera (firmware 20240708 V1.3) answers with <b>16</b> bytes, while the vendor source for a
+/// different build writes <b>20</b>. Each field below is decoded because a sequence of real
+/// payloads moved it on purpose — a clip recorded, a photo taken — and
+/// <c>protocol/golden/gpsock/device-status-sequence.txt</c> holds those payloads.
 /// </para>
 /// <para>
-/// So the undecoded bytes stay in <see cref="Raw"/>, every uncertain field is nullable and returns
-/// <see langword="null"/>, and the UI shows only what is known. Each field is promoted out of
-/// "unknown" by an experiment that moves it on purpose — charge the camera, pull the card, fill
-/// the storage — and the test that pins it down carries the observation that justified it.
+/// The rest stays in <see cref="Raw"/>, every uncertain field returns <see langword="null"/>, and
+/// the UI shows only what is known: showing somebody a battery percentage that is a different
+/// field misread is worse than showing nothing.
 /// </para>
 /// </remarks>
 public sealed class DeviceStatus
@@ -43,28 +44,51 @@ public sealed class DeviceStatus
     /// <summary>How many bytes the camera sent. 16 on the reference camera.</summary>
     public int Length => raw.Length;
 
-    /// <summary>Which mode the camera is in. Confirmed: the camera reported record while recording.</summary>
+    /// <summary>Which mode the camera is in.</summary>
     public CameraMode Mode => (CameraMode)raw[0];
 
-    /// <summary>Whether the camera is busy recording or playing back.</summary>
+    /// <summary>Whether the camera is busy: recording in record mode, playing back in browse mode.</summary>
     public bool IsBusy => (raw[1] & 0x01) != 0;
+
+    /// <summary>Whether the camera is recording to its card.</summary>
+    public bool IsRecording => Mode == CameraMode.Record && IsBusy;
 
     /// <summary>Whether the camera will record its own audio.</summary>
     public bool RecordsAudio => (raw[1] & 0x02) != 0;
 
     /// <summary>
-    /// Whether the camera is on external power. Confirmed: set while the reference camera was on USB.
+    /// Whether the camera is on external power. Set while the reference camera was on USB.
     /// </summary>
-    public bool IsCharging => raw[3] != 0;
+    public bool OnExternalPower => raw[3] != 0;
+
+    /// <summary>The Record Resolution setting's value id, or null when the payload is too short.</summary>
+    public int? RecordResolution => raw.Length > 4 ? raw[4] : null;
+
+    /// <summary>The Capture Resolution setting's value id, or null when the payload is too short.</summary>
+    public int? PhotoResolution => raw.Length > 9 ? raw[9] : null;
+
+    /// <summary>
+    /// How long the clip being recorded has run, or null when not recording.
+    /// </summary>
+    /// <remarks>Counted 1, 2, 3 seconds through a test clip on the reference camera.</remarks>
+    public TimeSpan? ClipLength => IsRecording ? Seconds(5) : null;
+
+    /// <summary>
+    /// How much more video the card holds at the current resolution, or null while recording.
+    /// </summary>
+    /// <remarks>The same bytes as <see cref="ClipLength"/>: they count down the card when idle.</remarks>
+    public TimeSpan? RecordTimeLeft => IsRecording ? null : Seconds(5);
+
+    /// <summary>How many more photos the card holds at the current resolution, or null when not reported.</summary>
+    public int? PhotosLeft => Count(10);
 
     /// <summary>
     /// The battery level, or <see langword="null"/> because it is not yet decoded for this firmware.
     /// </summary>
     /// <remarks>
-    /// The documented 20-byte layout puts a level in byte 2, but the reference camera reports
-    /// <c>0x80</c> there while on mains power, which reads as either "128" on a 0-100 scale or as a
-    /// flag bit rather than a level. Until the byte has been watched across a real discharge, this
-    /// stays unknown and the UI shows no battery figure.
+    /// The vendor source puts a level in byte 2, but the reference camera reports <c>0x80</c> there
+    /// on mains power and the byte never moved. Until it has been watched across a real discharge,
+    /// this stays unknown and the UI shows no battery figure.
     /// </remarks>
     [System.Diagnostics.CodeAnalysis.SuppressMessage(
         "Performance", "CA1822:Mark members as static",
@@ -73,21 +97,22 @@ public sealed class DeviceStatus
                         "signature would have to change again the moment the byte is pinned down.")]
     public int? BatteryPercent => null;
 
-    /// <summary>
-    /// Free space on the card, or <see langword="null"/> because it is not yet decoded.
-    /// </summary>
-    /// <remarks>
-    /// The 20-byte layout puts a 32-bit count at offset 16, which this 16-byte payload does not
-    /// reach. The figure must come from a build whose layout is known, or from an experiment that
-    /// fills the card by a known amount.
-    /// </remarks>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage(
-        "Performance", "CA1822:Mark members as static",
-        Justification = "An instance value that is not decoded yet; see BatteryPercent.")]
-    public long? FreeSpaceBytes => null;
-
     /// <summary>A line for the diagnostics page: what is known, and the bytes that are not.</summary>
     public string Describe() =>
-        $"mode={Mode} busy={IsBusy} audio={RecordsAudio} charging={IsCharging} " +
+        $"mode={Mode} recording={IsRecording} busy={IsBusy} audio={RecordsAudio} external-power={OnExternalPower} " +
         $"raw={Convert.ToHexString(raw)}";
+
+    private TimeSpan? Seconds(int offset) => Count(offset) is { } seconds ? TimeSpan.FromSeconds(seconds) : null;
+
+    /// <summary>A little-endian count, or null when the payload stops short of it or it is negative.</summary>
+    private int? Count(int offset)
+    {
+        if (raw.Length < offset + 4)
+        {
+            return null;
+        }
+
+        var value = BinaryPrimitives.ReadInt32LittleEndian(raw.AsSpan(offset));
+        return value < 0 ? null : value;
+    }
 }

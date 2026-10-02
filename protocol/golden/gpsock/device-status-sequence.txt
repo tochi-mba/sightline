@@ -1,0 +1,20 @@
+# Status payloads (GetDeviceStatus, 16 bytes) from the reference camera, firmware 20240708 V1.3,
+# on USB power, read on 2026-10-02 while a probe recorded a 3-second clip and took one photo.
+# Format: label, whitespace, hex. Lines starting with # are comments.
+#
+# What the sequence pins down:
+#   byte 0       mode (0 record, 1 capture)
+#   byte 1       bit 0 recording, bit 1 camera audio on
+#   bytes 5..8   int32 LE: seconds into the clip while recording (1, 2, 3); seconds of video the
+#                card still holds when idle (45861 before the 4 s clip, 45857 after)
+#   bytes 10..13 int32 LE: photos the card still holds (31998 -> 31997 when the clip took space,
+#                -> 31996 after the photo)
+#   byte 4 and byte 9 match the Record and Capture Resolution settings (both value 0)
+#   byte 14 changed (a5 -> 30 -> 00) with no pattern yet; byte 2 (0x80) and byte 15 never moved
+record-idle          000280010025b3000000fe7c00003001
+recording-1s         00038001000100000000fd7c00003001
+recording-2s         00038001000200000000fd7c00003001
+recording-3s         00038001000300000000fd7c00003001
+record-stopped       000280010021b3000000fd7c00003001
+capture-idle         010280010021b3000000fd7c00003001
+capture-after-photo  010280010021b3000000fc7c00003001

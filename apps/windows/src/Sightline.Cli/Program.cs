@@ -104,7 +104,7 @@ internal static class Program
         Console.WriteLine($"  Mode       {status.Mode}");
         Console.WriteLine($"  Recording  {(status.IsBusy ? "yes" : "no")}");
         Console.WriteLine($"  Audio      {(status.RecordsAudio ? "on" : "off")}");
-        Console.WriteLine($"  Power      {(status.IsCharging ? "external" : "battery")}");
+        Console.WriteLine($"  Power      {(status.OnExternalPower ? "external" : "battery")}");
         Console.WriteLine($"  Battery    {(status.BatteryPercent is { } b ? $"{b}%" : "not reported by this firmware")}");
         Console.WriteLine($"  Raw        {Convert.ToHexString(status.Raw)} ({status.Length} bytes)");
         Console.WriteLine();
