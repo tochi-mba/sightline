@@ -160,6 +160,144 @@ public sealed class RtpJpegReassemblerTests
         RtpJpegReassembler.LooksLikeJpeg([]).ShouldBeFalse();
     }
 
+    [Fact]
+    public void A_camera_that_never_sets_the_marker_bit_still_produces_pictures()
+    {
+        // Each picture then ends only when the next one starts, at fragment offset zero.
+        var first = FakeJpeg(800);
+        var second = FakeJpeg(900);
+        var wire = Raw(first, 0, marker: false, timestamp: 1)
+            .Concat(Raw(second, 0, marker: false, timestamp: 2))
+            .Concat(Raw(FakeJpeg(40), 0, marker: false, timestamp: 3))
+            .Concat(Raw(FakeJpeg(40), 0, marker: false, timestamp: 4))
+            .ToArray();
+
+        var frames = new RtpJpegReassembler().Push(wire);
+
+        // The third picture is still open: only a fifth packet's start would show the fourth ended.
+        frames.Select(f => f.Jpeg).ShouldBe([first, second]);
+    }
+
+    [Fact]
+    public void Fragments_from_a_picture_joined_half_way_through_are_dropped()
+    {
+        // Connecting mid-picture gives its tail first. Those fragments can never make a whole file.
+        var tail = Raw(FakeJpeg(300), fragmentOffset: 4000, marker: true, timestamp: 1);
+        var whole = FakeJpeg(500);
+        var wire = tail
+            .Concat(Raw(whole, 0, marker: true, timestamp: 2))
+            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 3))
+            .ToArray();
+
+        var frames = new RtpJpegReassembler().Push(wire);
+
+        frames.Count.ShouldBe(1);
+        frames[0].Jpeg.ShouldBe(whole);
+    }
+
+    [Fact]
+    public void Inline_quantisation_tables_are_skipped_rather_than_taken_for_picture()
+    {
+        // RFC 2435 puts tables in front of the first fragment when Q is 128 or more. This camera
+        // never does, but a reassembler that took them for picture data would corrupt every frame.
+        var jpeg = FakeJpeg(600);
+        var tables = new byte[] { 0, 0, 0, 6, 9, 9, 9, 9, 9, 9 };
+        var wire = Raw([.. tables, .. jpeg], 0, marker: true, timestamp: 1, quantisation: 200)
+            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 2))
+            .ToArray();
+
+        var frames = new RtpJpegReassembler().Push(wire);
+
+        frames[0].Jpeg.ShouldBe(jpeg);
+    }
+
+    [Fact]
+    public void A_table_header_claiming_more_than_the_packet_holds_is_dropped()
+    {
+        var lying = new byte[] { 0, 0, 0xFF, 0xFF, 1, 2, 3 };
+        var good = FakeJpeg(200);
+        var wire = Raw(lying, 0, marker: true, timestamp: 1, quantisation: 255)
+            .Concat(Raw(good, 0, marker: true, timestamp: 2))
+            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 3))
+            .ToArray();
+
+        var frames = new RtpJpegReassembler().Push(wire);
+
+        frames.Select(f => f.Jpeg).ShouldBe([good]);
+    }
+
+    [Fact]
+    public void A_header_listing_contributing_sources_is_not_taken_for_a_packet()
+    {
+        // This camera never sends them, so a first byte other than 0x80 inside the picture data is
+        // just data — treating it as a header would cut a picture in two.
+        var jpeg = FakeJpeg(400);
+        var lookalike = Raw(FakeJpeg(100), 0, marker: true, timestamp: 9);
+        lookalike[0] = 0x82;
+        var wire = Raw([.. jpeg[..200], .. lookalike, .. jpeg[200..]], 0, marker: true, timestamp: 1)
+            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 2))
+            .ToArray();
+
+        var frames = new RtpJpegReassembler().Push(wire);
+
+        frames[0].Jpeg.Length.ShouldBe(400 + lookalike.Length);
+    }
+
+    [Fact]
+    public void A_packet_too_short_for_its_headers_is_ignored()
+    {
+        // Twelve bytes that look like an RTP header and then the next packet straight away: there is
+        // no room for a JPEG header.
+        var bare = Raw([], 0, marker: true, timestamp: 1).AsSpan(0, 12).ToArray();
+        var jpeg = FakeJpeg(300);
+        var wire = bare
+            .Concat(Raw(jpeg, 0, marker: true, timestamp: 2))
+            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 3))
+            .ToArray();
+        var reassembler = new RtpJpegReassembler();
+
+        var frames = reassembler.Push(wire);
+
+        frames.Select(f => f.Jpeg).ShouldBe([jpeg]);
+    }
+
+    [Fact]
+    public void A_long_run_of_bytes_with_no_packet_in_it_does_not_grow_without_limit()
+    {
+        // A desynchronised stream must not hold every byte it ever received while looking for a
+        // header; after the run, a real stream is still read.
+        var reassembler = new RtpJpegReassembler();
+        var noise = new byte[(1 << 20) + 100];
+
+        reassembler.Push(noise).ShouldBeEmpty();
+        var jpeg = FakeJpeg(300);
+        var frames = reassembler.Push(Raw(jpeg, 0, marker: true, timestamp: 1)
+            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 2)).ToArray());
+
+        frames.Select(f => f.Jpeg).ShouldBe([jpeg]);
+    }
+
+    /// <summary>One RTP/JPEG packet with every header field under the test's control.</summary>
+    private static byte[] Raw(byte[] payload, int fragmentOffset, bool marker, uint timestamp, byte quantisation = 1)
+    {
+        const int jpegHeader = 12;
+        var packet = new byte[jpegHeader + 8 + payload.Length];
+        packet[0] = 0x80;
+        packet[1] = (byte)(RtpJpegReassembler.JpegPayloadType | (marker ? 0x80 : 0x00));
+        BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(2), (ushort)timestamp);
+        BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(4), timestamp);
+        BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(8), Ssrc);
+        packet[jpegHeader + 1] = (byte)((fragmentOffset >> 16) & 0xFF);
+        packet[jpegHeader + 2] = (byte)((fragmentOffset >> 8) & 0xFF);
+        packet[jpegHeader + 3] = (byte)(fragmentOffset & 0xFF);
+        packet[jpegHeader + 4] = 1;
+        packet[jpegHeader + 5] = quantisation;
+        packet[jpegHeader + 6] = 640 / 8;
+        packet[jpegHeader + 7] = 360 / 8;
+        payload.CopyTo(packet.AsSpan(jpegHeader + 8));
+        return packet;
+    }
+
     private static List<CameraFrame> PushAll(RtpJpegReassembler reassembler, IEnumerable<byte[]> packets)
     {
         var frames = new List<CameraFrame>();

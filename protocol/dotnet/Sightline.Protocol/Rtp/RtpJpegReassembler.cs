@@ -99,14 +99,9 @@ public sealed class RtpJpegReassembler
         }
     }
 
-    /// <summary>Whether a packet begins at <paramref name="offset"/>.</summary>
+    /// <summary>Whether a packet begins at <paramref name="offset"/>, which has a whole header after it.</summary>
     private bool IsPacketStart(ReadOnlySpan<byte> span, int offset)
     {
-        if (offset + RtpHeaderLength > span.Length)
-        {
-            return false;
-        }
-
         // Version 2, no padding or extension, and the JPEG payload type. The marker bit varies.
         if (span[offset] != 0x80 || (span[offset + 1] & 0x7F) != JpegPayloadType)
         {
@@ -144,14 +139,10 @@ public sealed class RtpJpegReassembler
             return;
         }
 
-        var ssrc = BinaryPrimitives.ReadUInt32BigEndian(packet.AsSpan(8));
-        synchronisationSource ??= ssrc;
-        if (ssrc != synchronisationSource)
-        {
-            // Another sender on the same connection. Mixing its fragments into this picture would
-            // produce a file that decodes to rubbish.
-            return;
-        }
+        // The first packet fixes the source. From then on a packet from any other sender is never
+        // split out at all — IsPacketStart does not recognise its header — so its bytes are skipped
+        // as noise rather than mixed into this picture.
+        synchronisationSource ??= BinaryPrimitives.ReadUInt32BigEndian(packet.AsSpan(8));
 
         var marker = (packet[1] & 0x80) != 0;
         var sequence = BinaryPrimitives.ReadUInt16BigEndian(packet.AsSpan(2));
@@ -164,15 +155,12 @@ public sealed class RtpJpegReassembler
         PacketsRead++;
 
         var timestamp = BinaryPrimitives.ReadUInt32BigEndian(packet.AsSpan(4));
-        var contributing = packet[0] & 0x0F;
-        var jpegHeader = RtpHeaderLength + (contributing * 4);
-        if (packet.Length < jpegHeader + JpegHeaderLength)
-        {
-            return;
-        }
 
-        // RFC 2435: type-specific, a 24-bit fragment offset, type, Q, then width and height in
-        // units of eight pixels.
+        // The JPEG header follows the RTP header directly: IsPacketStart accepts only a first byte
+        // of 0x80, so no packet that gets here lists contributing sources in between. RFC 2435:
+        // type-specific, a 24-bit fragment offset, type, Q, then width and height in units of
+        // eight pixels.
+        const int jpegHeader = RtpHeaderLength;
         var fragmentOffset = (packet[jpegHeader + 1] << 16)
             | (packet[jpegHeader + 2] << 8)
             | packet[jpegHeader + 3];
