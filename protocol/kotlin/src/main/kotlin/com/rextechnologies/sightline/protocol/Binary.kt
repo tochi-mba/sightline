@@ -12,6 +12,10 @@ internal fun ByteArray.readUInt16LittleEndian(offset: Int): Int = unsignedAt(off
 /** A little-endian signed 16-bit value starting at [offset]. */
 internal fun ByteArray.readInt16LittleEndian(offset: Int): Int = readUInt16LittleEndian(offset).toShort().toInt()
 
+/** A little-endian unsigned 32-bit value starting at [offset], widened so it can never read as negative. */
+internal fun ByteArray.readUInt32LittleEndian(offset: Int): Long =
+    readUInt16LittleEndian(offset).toLong() or (readUInt16LittleEndian(offset + 2).toLong() shl 16)
+
 /** Writes the low 16 bits of [value] little-endian, starting at [offset]. */
 internal fun ByteArray.writeUInt16LittleEndian(offset: Int, value: Int) {
     this[offset] = value.toByte()
