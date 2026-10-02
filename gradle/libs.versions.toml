@@ -1,0 +1,48 @@
+# Every JVM and Android version in the build, written once.
+#
+# Rules for adding an entry:
+#   - Pin an exact version. A range makes a build that passed today fail tomorrow for no commit.
+#   - Say why in a comment when the version is not simply the newest.
+#
+# The toolchain pins match REX Technologies' textwire and Flint apps, which build on the same machine
+# against the same SDK.
+
+[versions]
+# The JDK every module compiles against, through the toolchain.
+jdk = "17"
+agp = "9.4.1"
+kotlin = "2.4.20"
+jacoco = "0.8.14"
+# Formatting follows the pinned ktlint release, locally and in CI alike.
+ktlint = "1.8.0"
+
+# The Android app, which joins the build under apps/android/. Nothing reads these yet.
+compile-sdk = "36"
+target-sdk = "36"
+# Android 10: WifiNetworkSpecifier, which joins the camera's Wi-Fi without giving up the phone's
+# internet connection, starts here.
+min-sdk = "29"
+
+coroutines = "1.11.0"
+
+junit = "4.13.2"
+
+[libraries]
+kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+
+junit = { module = "junit:junit", version.ref = "junit" }
+
+# What the convention plugins in tools/build-logic compile against. The build that applies them
+# already has these on its classpath, at the same versions.
+android-gradle-plugin = { module = "com.android.tools.build:gradle", version.ref = "agp" }
+kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+
+# Run as a plain JavaExec rather than through a Gradle plugin: the command-line distribution only has
+# to be on a classpath, so the lint gate can never be what breaks a Gradle or Kotlin upgrade.
+ktlint-cli = { module = "com.pinterest.ktlint:ktlint-cli", version.ref = "ktlint" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
