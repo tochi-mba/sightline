@@ -200,8 +200,13 @@ public sealed class FakeCamera : ICameraTransport
     private void Ack(GpSockCommand command, byte[] payload) =>
         outbox.Enqueue(Frame(GpSockType.Ack, command, payload));
 
-    private void Nak(GpSockCommand command, NakCode reason) =>
-        outbox.Enqueue(Frame(GpSockType.Nak, command, BitConverter.GetBytes((short)reason)));
+    private void Nak(GpSockCommand command, NakCode reason)
+    {
+        // As the firmware sends it: the reason in the size slot, and no payload.
+        var frame = Frame(GpSockType.Nak, command, []);
+        BitConverter.GetBytes((short)reason).CopyTo(frame, 12);
+        outbox.Enqueue(frame);
+    }
 
     private void Chunked(GpSockCommand command, byte[] whole)
     {

@@ -10,11 +10,13 @@ namespace Sightline.Protocol.GpSock;
 /// <para>
 /// A request is the eight-byte tag, a little-endian type, the command split into its two bytes,
 /// and the payload. A request carries no length: the camera knows how long each command's payload
-/// is. A response is the same but with a little-endian payload size before the payload.
+/// is. An acknowledgement is the same but with a little-endian payload size before the payload; a
+/// refusal puts its reason in that slot instead and carries nothing after it.
 /// </para>
 /// <code>
-/// request : "GPSOCKET" | uint16 LE type | mode | cmd | payload
-/// response: "GPSOCKET" | uint16 LE type | mode | cmd | uint16 LE size | payload
+/// request : "GPSOCKET" | uint16 LE type=1 | mode | cmd | payload
+/// ack     : "GPSOCKET" | uint16 LE type=2 | mode | cmd | uint16 LE size | payload
+/// refusal : "GPSOCKET" | uint16 LE type=3 | mode | cmd | int16 LE reason
 /// </code>
 /// <para>
 /// The tag is why this port looks dead to every scanner: the firmware compares those eight bytes
@@ -77,6 +79,17 @@ public static class GpSockFrame
 
         var type = (GpSockType)BinaryPrimitives.ReadUInt16LittleEndian(buffer[8..]);
         var command = (GpSockCommand)((buffer[10] << 8) | buffer[11]);
+        if (type == GpSockType.Nak)
+        {
+            // A refusal carries its reason where an acknowledgement carries its size, and nothing
+            // after it: the firmware builds it as gp_resp_set(NAK | cmd, reason, NULL, 0). Reading
+            // the reason as a size would wait for up to 64 KB that never come — "busy" is -1, so
+            // 65,535 of them — and the app would hang on the most ordinary refusal there is.
+            response = new GpSockResponse(type, command, buffer.Slice(12, 2).ToArray());
+            consumed = ResponseHeaderLength;
+            return true;
+        }
+
         int size = BinaryPrimitives.ReadUInt16LittleEndian(buffer[12..]);
         if (buffer.Length < ResponseHeaderLength + size)
         {

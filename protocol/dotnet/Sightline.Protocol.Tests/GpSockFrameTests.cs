@@ -67,15 +67,34 @@ public sealed class GpSockFrameTests
     }
 
     [Fact]
-    public void A_refusal_carries_the_reason_the_camera_gave()
+    public void A_refusal_carries_its_reason_where_an_acknowledgement_carries_its_size()
     {
-        var busy = BitConverter.GetBytes((short)NakCode.ServerBusy);
-        var bytes = Response(GpSockType.Nak, GpSockCommand.PlaybackGetFileList, busy);
+        // Exactly what the firmware sends for "busy": gp_resp_set(NAK | cmd, -1, NULL, 0) is the
+        // fourteen-byte header with 0xFFFF in the size slot and no payload at all. Read as a size,
+        // that is 65,535 bytes that never arrive, and the app hangs on the commonest refusal.
+        var bytes = new byte[] { 0x47, 0x50, 0x53, 0x4F, 0x43, 0x4B, 0x45, 0x54, 0x03, 0x00, 0x03, 0x03, 0xFF, 0xFF };
 
-        GpSockFrame.TryDecode(bytes, out var response, out _).ShouldBeTrue();
+        GpSockFrame.TryDecode(bytes, out var response, out var consumed).ShouldBeTrue();
 
+        consumed.ShouldBe(14);
         response.IsAck.ShouldBeFalse();
+        response.Command.ShouldBe(GpSockCommand.PlaybackGetFileList);
         response.Nak.ShouldBe(NakCode.ServerBusy);
+    }
+
+    [Fact]
+    public void A_refusal_takes_no_bytes_from_the_frame_after_it()
+    {
+        var refusal = new byte[] { 0x47, 0x50, 0x53, 0x4F, 0x43, 0x4B, 0x45, 0x54, 0x03, 0x00, 0x03, 0x02, 0xFB, 0xFF };
+        var next = Response(GpSockType.Ack, GpSockCommand.GetDeviceStatus, [7]);
+        var both = refusal.Concat(next).ToArray();
+
+        GpSockFrame.TryDecode(both, out var first, out var consumed).ShouldBeTrue();
+        first.Nak.ShouldBe(NakCode.NoStorage);
+
+        GpSockFrame.TryDecode(both.AsSpan(consumed), out var second, out _).ShouldBeTrue();
+        second.Command.ShouldBe(GpSockCommand.GetDeviceStatus);
+        second.Payload.ShouldBe(new byte[] { 7 });
     }
 
     [Fact]
@@ -132,7 +151,7 @@ public sealed class GpSockFrameTests
     [Fact]
     public void A_refusal_is_never_mistaken_for_the_end_of_a_chunked_answer()
     {
-        var bytes = Response(GpSockType.Nak, GpSockCommand.GetParameterFile, []);
+        var bytes = new byte[] { 0x47, 0x50, 0x53, 0x4F, 0x43, 0x4B, 0x45, 0x54, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00 };
 
         GpSockFrame.TryDecode(bytes, out var response, out _).ShouldBeTrue();
 
