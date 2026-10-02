@@ -10,11 +10,13 @@ import com.rextechnologies.sightline.protocol.writeUInt16LittleEndian
  *
  * A request is the eight-byte tag, a little-endian type, the command split into its two bytes,
  * and the payload. A request carries no length: the camera knows how long each command's payload
- * is. A response is the same but with a little-endian payload size before the payload.
+ * is. An acknowledgement is the same but with a little-endian payload size before the payload; a
+ * refusal puts its reason in that slot instead and carries nothing after it.
  *
  * ```
- * request : "GPSOCKET" | uint16 LE type | mode | cmd | payload
- * response: "GPSOCKET" | uint16 LE type | mode | cmd | uint16 LE size | payload
+ * request : "GPSOCKET" | uint16 LE type=1 | mode | cmd | payload
+ * ack     : "GPSOCKET" | uint16 LE type=2 | mode | cmd | uint16 LE size | payload
+ * refusal : "GPSOCKET" | uint16 LE type=3 | mode | cmd | int16 LE reason
  * ```
  *
  * The tag is why this port looks dead to every scanner: the firmware compares those eight bytes
@@ -26,7 +28,10 @@ object GpSockFrame {
     /** Bytes before the payload in a request. */
     const val REQUEST_HEADER_LENGTH = 12
 
-    /** Bytes before the payload in a response: a request header plus the size. */
+    /**
+     * Bytes before the payload in an acknowledgement: a request header plus the size. A refusal is
+     * exactly this long.
+     */
     const val RESPONSE_HEADER_LENGTH = 14
 
     /** The eight bytes every frame begins with, in both directions. A copy each time, so it stays fixed. */
@@ -73,6 +78,15 @@ object GpSockFrame {
 
         val type = GpSockType.fromCode(buffer.readUInt16LittleEndian(offset + 8))
         val command = GpSockCommand.fromCode((buffer.unsignedAt(offset + 10) shl 8) or buffer.unsignedAt(offset + 11))
+        if (type == GpSockType.Nak) {
+            // A refusal carries its reason where an acknowledgement carries its size, and nothing
+            // after it: the firmware builds it as gp_resp_set(NAK | cmd, reason, NULL, 0). Reading
+            // the reason as a size would wait for up to 64 KB that never come — "busy" is -1, so
+            // 65,535 of them — and the app would hang on the most ordinary refusal there is.
+            val reason = buffer.copyOfRange(offset + 12, offset + RESPONSE_HEADER_LENGTH)
+            return Decoded(GpSockResponse(type, command, reason), RESPONSE_HEADER_LENGTH)
+        }
+
         val size = buffer.readUInt16LittleEndian(offset + 12)
         if (length < RESPONSE_HEADER_LENGTH + size) {
             return null

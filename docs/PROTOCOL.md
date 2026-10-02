@@ -35,7 +35,8 @@ A full connect-scan of ports 1–10000 found only these three. No UDP service an
 
 ```text
 request : "GPSOCKET" | uint16 LE type (1 = command) | mode_id | cmd_id | payload
-response: "GPSOCKET" | uint16 LE type (2 = ack, 3 = nak) | mode_id | cmd_id | uint16 LE size | payload
+ack     : "GPSOCKET" | uint16 LE type (2 = ack) | mode_id | cmd_id | uint16 LE size | payload
+refusal : "GPSOCKET" | uint16 LE type (3 = nak) | mode_id | cmd_id | int16 LE reason
 ```
 
 - `mode_id` and `cmd_id` are the high and low bytes of a 16-bit command number.
@@ -43,7 +44,9 @@ response: "GPSOCKET" | uint16 LE type (2 = ack, 3 = nak) | mode_id | cmd_id | ui
 - **The server silently drops any request that does not begin with `GPSOCKET`.** No banner, no
   error. This is why the port looks dead to every scanner and to HTTP, RTSP, telnet and ONVIF.
 - **Long answers are chunked**: a run of acks of at most 242 bytes each, ended by an empty ack.
-- A refusal (`nak`) carries a 16-bit signed reason code in the payload.
+- A refusal (`nak`) has no payload: its 16-bit signed reason code sits where an ack's size does.
+  That is how the firmware source builds every refusal, `gp_resp_set(NAK | cmd, reason, NULL, 0)`;
+  read as a size, "busy" (−1) would be 65,535 bytes that never arrive.
 - **The server takes one client at a time.** A vendor app connected to it locks this app out.
 
 ### Commands verified on the device

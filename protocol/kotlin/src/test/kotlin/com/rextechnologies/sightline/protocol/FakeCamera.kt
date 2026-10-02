@@ -185,7 +185,8 @@ class FakeCamera : CameraTransport {
     }
 
     private fun nak(command: Int, reason: NakCode) {
-        outbox.addLast(gpSockResponse(GpSockType.Nak.code, command, bytes(reason.code and 0xFF, reason.code shr 8)))
+        // As the firmware sends it: the reason in the size slot, and no payload.
+        outbox.addLast(gpSockRefusal(command, reason.code))
     }
 
     private fun chunked(command: Int, whole: ByteArray) {
