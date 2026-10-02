@@ -4,6 +4,8 @@ import com.rextechnologies.sightline.protocol.ByteQueue
 import com.rextechnologies.sightline.protocol.CameraTransport
 import com.rextechnologies.sightline.protocol.readUInt16LittleEndian
 import com.rextechnologies.sightline.protocol.writeInt32LittleEndian
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.Closeable
 
 /**
@@ -24,6 +26,15 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
     private val receiveBuffer = ByteArray(8192)
     private val pending = ByteQueue()
 
+    /**
+     * One request in flight at a time.
+     *
+     * An app sends a shutter press while the live view is still starting the stream, and both go down
+     * this one socket. Without this, the two requests interleave and each reads the other's answer —
+     * the camera did both things and the app reports the wrong outcome for each.
+     */
+    private val oneAtATime = Mutex()
+
     /** Opens the control channel. */
     suspend fun open() {
         transport.connect()
@@ -36,10 +47,11 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
      * @param payload Its argument, empty for most commands.
      * @return The camera's answer, which may be a refusal.
      */
-    suspend fun ask(command: GpSockCommand, payload: ByteArray = ByteArray(0)): GpSockResponse {
-        transport.send(GpSockFrame.encode(command, payload))
-        return readFrame()
-    }
+    suspend fun ask(command: GpSockCommand, payload: ByteArray = ByteArray(0)): GpSockResponse =
+        oneAtATime.withLock {
+            transport.send(GpSockFrame.encode(command, payload))
+            readFrame()
+        }
 
     /**
      * Sends a command and gathers the chunked answer the camera streams back.
@@ -56,23 +68,9 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
         command: GpSockCommand,
         payload: ByteArray = ByteArray(0),
         onProgress: ((Int) -> Unit)? = null,
-    ): ByteArray {
+    ): ByteArray = oneAtATime.withLock {
         transport.send(GpSockFrame.encode(command, payload))
-
-        val gathered = ByteQueue()
-        while (true) {
-            val response = readFrame()
-            if (response.type == GpSockType.Nak) {
-                throw GpSockRefusedException(command, response.nakCode)
-            }
-
-            if (response.isEndOfChunks) {
-                return gathered.toByteArray()
-            }
-
-            gathered.append(response.payload)
-            onProgress?.invoke(gathered.size)
-        }
+        gatherChunks(command, onProgress)
     }
 
     /**
@@ -135,6 +133,24 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
         payload[4] = 1
         payload[5] = value.toByte()
         demand(GpSockCommand.MenuSetParameter, payload)
+    }
+
+    /** Reads the run of chunks answering [command] that was just sent, up to the empty one that ends it. */
+    private suspend fun gatherChunks(command: GpSockCommand, onProgress: ((Int) -> Unit)?): ByteArray {
+        val gathered = ByteQueue()
+        while (true) {
+            val response = readFrame()
+            if (response.type == GpSockType.Nak) {
+                throw GpSockRefusedException(command, response.nakCode)
+            }
+
+            if (response.isEndOfChunks) {
+                return gathered.toByteArray()
+            }
+
+            gathered.append(response.payload)
+            onProgress?.invoke(gathered.size)
+        }
     }
 
     private suspend fun readFrame(): GpSockResponse {

@@ -1,6 +1,8 @@
 package com.rextechnologies.sightline.protocol.gpsock
 
 import com.rextechnologies.sightline.protocol.FakeCamera
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertContains
@@ -137,6 +139,27 @@ class GpSockConnectionTest {
         // The camera takes the command and never answers, which is what its access point going to
         // sleep mid-session looks like from here.
         assertFailsWith<GpSockProtocolException> { connection.ask(GpSockCommand.GetDeviceStatus) }
+    }
+
+    @Test
+    fun `commands sent at the same moment each get their own answer`(): Unit = runBlocking {
+        // The live view starts the stream while a person presses the shutter, both down one socket.
+        // Each must read the answer to its own command, not the other's. A slow link that brings a
+        // few bytes at a time is what gives the second request its chance to cut in.
+        val (connection, camera) = open {
+            fileCount = 4
+            answersSlowly = true
+            dribbleBytes = 3
+        }
+        connection.setMode(CameraMode.Browse)
+
+        val expected = List(20) { index ->
+            if (index % 2 == 0) GpSockCommand.GetDeviceStatus else GpSockCommand.PlaybackGetFileCount
+        }
+        val answers = expected.map { command -> async { connection.ask(command) } }.awaitAll()
+
+        assertEquals(expected, answers.map { it.command })
+        assertTrue(camera.isConnected)
     }
 
     @Test
