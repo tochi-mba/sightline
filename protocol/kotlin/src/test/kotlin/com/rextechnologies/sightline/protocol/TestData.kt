@@ -1,6 +1,7 @@
 package com.rextechnologies.sightline.protocol
 
 import com.rextechnologies.sightline.protocol.gpsock.GpSockFrame
+import com.rextechnologies.sightline.protocol.gpsock.GpSockType
 
 /** The committed vectors in protocol/golden, which the .NET tests read as well. */
 object Golden {
@@ -33,5 +34,16 @@ fun gpSockResponse(type: Int, command: Int, payload: ByteArray): ByteArray {
     frame[12] = (payload.size and 0xFF).toByte()
     frame[13] = (payload.size shr 8).toByte()
     payload.copyInto(frame, GpSockFrame.RESPONSE_HEADER_LENGTH)
+    return frame
+}
+
+/**
+ * A refusal exactly as the firmware sends it, `gp_resp_set(NAK | cmd, reason, NULL, 0)`: the fourteen-byte
+ * header with the reason in the slot an acknowledgement uses for its size, and nothing after it.
+ */
+fun gpSockRefusal(command: Int, reason: Int): ByteArray {
+    val frame = gpSockResponse(GpSockType.Nak.code, command, ByteArray(0))
+    frame[12] = (reason and 0xFF).toByte()
+    frame[13] = (reason shr 8).toByte()
     return frame
 }

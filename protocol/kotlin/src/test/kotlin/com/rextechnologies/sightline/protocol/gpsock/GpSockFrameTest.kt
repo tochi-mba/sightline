@@ -1,6 +1,7 @@
 package com.rextechnologies.sightline.protocol.gpsock
 
 import com.rextechnologies.sightline.protocol.bytes
+import com.rextechnologies.sightline.protocol.gpSockRefusal
 import com.rextechnologies.sightline.protocol.gpSockResponse
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -71,14 +72,32 @@ class GpSockFrameTest {
     }
 
     @Test
-    fun `a refusal carries the reason the camera gave`() {
-        val busy = bytes(0xFF, 0xFF)
-        val wire = gpSockResponse(GpSockType.Nak.code, GpSockCommand.PlaybackGetFileList.code, busy)
+    fun `a refusal carries its reason where an acknowledgement carries its size`() {
+        // Exactly what the firmware sends for "busy": gp_resp_set(NAK | cmd, -1, NULL, 0) is the
+        // fourteen-byte header with 0xFFFF in the size slot and no payload at all. Read as a size,
+        // that is 65,535 bytes that never arrive, and the app hangs on the commonest refusal.
+        val wire = bytes(0x47, 0x50, 0x53, 0x4F, 0x43, 0x4B, 0x45, 0x54, 0x03, 0x00, 0x03, 0x03, 0xFF, 0xFF)
 
-        val response = assertNotNull(GpSockFrame.tryDecode(wire)).response
+        val decoded = assertNotNull(GpSockFrame.tryDecode(wire))
 
-        assertFalse(response.isAck)
-        assertEquals(NakCode.ServerBusy, response.nak)
+        assertEquals(14, decoded.consumed)
+        assertFalse(decoded.response.isAck)
+        assertEquals(GpSockCommand.PlaybackGetFileList, decoded.response.command)
+        assertEquals(NakCode.ServerBusy, decoded.response.nak)
+    }
+
+    @Test
+    fun `a refusal takes no bytes from the frame after it`() {
+        val refusal = bytes(0x47, 0x50, 0x53, 0x4F, 0x43, 0x4B, 0x45, 0x54, 0x03, 0x00, 0x03, 0x02, 0xFB, 0xFF)
+        val next = gpSockResponse(GpSockType.Ack.code, GpSockCommand.GetDeviceStatus.code, bytes(7))
+        val both = refusal + next
+
+        val first = assertNotNull(GpSockFrame.tryDecode(both))
+        assertEquals(NakCode.NoStorage, first.response.nak)
+
+        val second = assertNotNull(GpSockFrame.tryDecode(both, offset = first.consumed))
+        assertEquals(GpSockCommand.GetDeviceStatus, second.response.command)
+        assertContentEquals(bytes(7), second.response.payload)
     }
 
     @Test
@@ -129,7 +148,7 @@ class GpSockFrameTest {
 
     @Test
     fun `a refusal is never mistaken for the end of a chunked answer`() {
-        val wire = gpSockResponse(GpSockType.Nak.code, GpSockCommand.GetParameterFile.code, ByteArray(0))
+        val wire = bytes(0x47, 0x50, 0x53, 0x4F, 0x43, 0x4B, 0x45, 0x54, 0x03, 0x00, 0x00, 0x02, 0x00, 0x00)
 
         val response = assertNotNull(GpSockFrame.tryDecode(wire)).response
 
@@ -146,10 +165,10 @@ class GpSockFrameTest {
     }
 
     @Test
-    fun `a refusal too short to carry a reason reads as no error rather than a guess`() {
-        val wire = gpSockResponse(GpSockType.Nak.code, GpSockCommand.CapturePicture.code, bytes(0xFF))
-
-        val response = assertNotNull(GpSockFrame.tryDecode(wire)).response
+    fun `a refusal built without a reason reads as no refusal rather than a guess`() {
+        // Every refusal off the wire has its two-byte reason, so only a response built by hand can
+        // lack one; it still must not be read past its end.
+        val response = GpSockResponse(GpSockType.Nak, GpSockCommand.SetMode, bytes(0xFF))
 
         assertEquals(NakCode.Ok, response.nak)
         assertEquals(0, response.nakCode)
@@ -166,7 +185,7 @@ class GpSockFrameTest {
 
     @Test
     fun `a reason the camera gives that has no name keeps its number`() {
-        val wire = gpSockResponse(GpSockType.Nak.code, GpSockCommand.CapturePicture.code, bytes(0x9D, 0xFF))
+        val wire = gpSockRefusal(GpSockCommand.CapturePicture.code, -99)
 
         val response = assertNotNull(GpSockFrame.tryDecode(wire)).response
 
