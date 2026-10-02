@@ -20,6 +20,10 @@ import java.io.Closeable
  * The camera is single-client, so a second connection — from this app or from a vendor app — is
  * refused or starves. That is the "camera busy" case the UI explains.
  *
+ * Every answer names the command it answers; the firmware echoes it. A frame that answers some
+ * other command is a leftover from a request that was abandoned — one whose caller was cancelled
+ * while it waited, say — and is skipped rather than handed to whoever asked next.
+ *
  * @param transport A transport that is already connected, or about to be.
  */
 class GpSockConnection(private val transport: CameraTransport) : Closeable {
@@ -34,6 +38,10 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
      * the camera did both things and the app reports the wrong outcome for each.
      */
     private val oneAtATime = Mutex()
+
+    /** How many leftover answers to abandoned requests have been skipped. */
+    var staleFramesSkipped: Int = 0
+        private set
 
     /** Opens the control channel. */
     suspend fun open() {
@@ -50,7 +58,7 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
     suspend fun ask(command: GpSockCommand, payload: ByteArray = ByteArray(0)): GpSockResponse =
         oneAtATime.withLock {
             transport.send(GpSockFrame.encode(command, payload))
-            readFrame()
+            readAnswer(command)
         }
 
     /**
@@ -139,7 +147,7 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
     private suspend fun gatherChunks(command: GpSockCommand, onProgress: ((Int) -> Unit)?): ByteArray {
         val gathered = ByteQueue()
         while (true) {
-            val response = readFrame()
+            val response = readAnswer(command)
             if (response.type == GpSockType.Nak) {
                 throw GpSockRefusedException(command, response.nakCode)
             }
@@ -150,6 +158,18 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
 
             gathered.append(response.payload)
             onProgress?.invoke(gathered.size)
+        }
+    }
+
+    /** Reads frames until one answers [expected], skipping and counting any left over from before. */
+    private suspend fun readAnswer(expected: GpSockCommand): GpSockResponse {
+        while (true) {
+            val response = readFrame()
+            if (response.command == expected) {
+                return response
+            }
+
+            staleFramesSkipped++
         }
     }
 
