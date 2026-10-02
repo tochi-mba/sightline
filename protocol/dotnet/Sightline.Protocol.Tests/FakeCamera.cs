@@ -157,9 +157,12 @@ public sealed class FakeCamera : ICameraTransport
 
             if (download is not null)
             {
-                // The firmware looks for a new request between frames and gives the transfer up.
+                // The firmware looks for a new request between frames and gives the transfer up —
+                // and the request that stopped it is used up doing so: the reference camera never
+                // answered it (2026-10-02). Only the transfer's refusal comes back.
                 download = null;
                 Nak(GpSockCommand.PlaybackGetRawData, NakCode.InvalidCommand);
+                continue;
             }
 
             foreach (var stray in StrayFramesBeforeNextAnswer)
@@ -188,15 +191,14 @@ public sealed class FakeCamera : ICameraTransport
             // The next frame of a file is made only when the last one has been taken, which is
             // what gives a cancel something to interrupt.
             var size = Math.Min(DownloadChunk, transfer.Bytes.Length - transfer.Offset);
-            if (size == 0)
+            Ack(GpSockCommand.PlaybackGetRawData, transfer.Bytes.AsSpan(transfer.Offset, size).ToArray());
+            download = (transfer.Bytes, transfer.Offset + size);
+            if (transfer.Offset + size == transfer.Bytes.Length)
             {
+                // The firmware sends the closing frame straight after the last chunk, so by the
+                // time a client has handled that chunk the transfer is already over.
                 download = null;
                 Ack(GpSockCommand.PlaybackGetRawData, []);
-            }
-            else
-            {
-                Ack(GpSockCommand.PlaybackGetRawData, transfer.Bytes.AsSpan(transfer.Offset, size).ToArray());
-                download = (transfer.Bytes, transfer.Offset + size);
             }
         }
 

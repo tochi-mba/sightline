@@ -422,12 +422,19 @@ public sealed class GpSockConnection : IAsyncDisposable
     /// Stops a transfer the camera is still sending, and reads past what it already sent.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// The firmware checks for a new request between frames and abandons the transfer when it sees
-    /// one, answering the transfer with a refusal and then the new request as usual. So this sends
-    /// the cheapest request there is, reads to the transfer's last word, then reads that request's
-    /// own answer, leaving nothing behind for the next command to mistake for its reply. If the
-    /// camera does not wind down in time the channel is marked out of step, and every later request
-    /// fails at once rather than reading part of a file as its answer.
+    /// one. The request that stopped it is used up in doing so — the reference camera answered the
+    /// transfer with a refusal and never answered the request (2026-10-02). So this sends the
+    /// cheapest request there is and reads to the transfer's last word.
+    /// </para>
+    /// <para>
+    /// If that last word is the normal end rather than a refusal, the transfer had finished before
+    /// the request arrived, so the camera treats the request as an ordinary one and answers it; that
+    /// answer is read too, or a later status request would take it as its own and every status after
+    /// it would be one behind. If the camera does not wind down in time the channel is marked out of
+    /// step, and every later request fails at once rather than reading part of a file as its answer.
+    /// </para>
     /// </remarks>
     private async Task WindDownAsync(GpSockCommand transfer)
     {
@@ -443,7 +450,10 @@ public sealed class GpSockConnection : IAsyncDisposable
             }
             while (response.Type != GpSockType.Nak && !response.IsEndOfChunks);
 
-            await ReadAnswerAsync(GpSockCommand.GetDeviceStatus, deadline.Token).ConfigureAwait(false);
+            if (response.IsEndOfChunks)
+            {
+                await ReadAnswerAsync(GpSockCommand.GetDeviceStatus, deadline.Token).ConfigureAwait(false);
+            }
         }
         catch (Exception exception) when (exception is OperationCanceledException or IOException
                                               or GpSockProtocolException or InvalidOperationException

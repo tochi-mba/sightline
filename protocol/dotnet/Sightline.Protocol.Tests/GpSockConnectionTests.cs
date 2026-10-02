@@ -314,6 +314,50 @@ public sealed class GpSockConnectionTests
     }
 
     [Fact]
+    public async Task Cancelling_a_download_does_not_wait_for_an_answer_the_camera_never_sends()
+    {
+        // The request that stops a transfer is consumed by the firmware and never answered; the
+        // reference camera sent only the transfer's refusal. Waiting for an answer to it would
+        // stall every cancel for the whole wind-down timeout and then give the channel up.
+        var (connection, _) = await OpenAsync(c =>
+        {
+            c.AddFile('A', Taken, new byte[10_000]);
+            c.DownloadChunk = 1000;
+        });
+        await connection.SetModeAsync(CameraMode.Browse, CancellationToken.None);
+        using var cancel = new CancellationTokenSource();
+        using var destination = new MemoryStream();
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+
+        await Should.ThrowAsync<OperationCanceledException>(() => connection.DownloadAsync(
+            1, destination, new Synchronous<long>(_ => cancel.Cancel()), cancel.Token));
+
+        clock.Elapsed.ShouldBeLessThan(GpSockConnection.WindDownTimeout / 2);
+        (await connection.GetFileCountAsync(CancellationToken.None)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task A_download_that_finished_before_the_cancel_arrived_still_has_its_answer_read()
+    {
+        // If the last frame was already on its way, the camera never saw a transfer to stop and
+        // answers the request normally. That answer must be read now, or a later status request
+        // would take it as its own and every status after it would be one behind.
+        var (connection, camera) = await OpenAsync(c =>
+        {
+            c.AddFile('A', Taken, new byte[2000]);
+            c.DownloadChunk = 1000;
+        });
+        await connection.SetModeAsync(CameraMode.Browse, CancellationToken.None);
+        using var cancel = new CancellationTokenSource();
+        using var cancelling = new CancelOnLastChunk(cancel, camera.Files[0].Content.Length);
+
+        await Should.ThrowAsync<OperationCanceledException>(() => connection.DownloadAsync(1, cancelling, null, cancel.Token));
+
+        (await connection.GetStatusAsync(CancellationToken.None)).Mode.ShouldBe(CameraMode.Browse);
+        connection.StaleFramesSkipped.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task A_destination_that_fails_mid_download_still_leaves_the_channel_in_step()
     {
         var (connection, _) = await OpenAsync(c =>
@@ -622,6 +666,20 @@ public sealed class GpSockConnectionTests
     private sealed class Synchronous<T>(Action<T> report) : IProgress<T>
     {
         public void Report(T value) => report(value);
+    }
+
+    /// <summary>A destination that cancels the download while it writes the file's last byte.</summary>
+    private sealed class CancelOnLastChunk(CancellationTokenSource cancel, long fileLength) : MemoryStream
+    {
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await base.WriteAsync(buffer, cancellationToken);
+            if (Length >= fileLength)
+            {
+                await cancel.CancelAsync();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+        }
     }
 
     /// <summary>A destination that takes a few writes and then fails, as a full disk does.</summary>
