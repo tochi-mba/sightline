@@ -151,6 +151,106 @@ public sealed class RtspClientTests
         await Should.ThrowAsync<RtspException>(() => client.OptionsAsync(CancellationToken.None));
     }
 
+    [Fact]
+    public async Task Teardown_ends_the_session_it_was_given()
+    {
+        var transport = new ScriptedTransport([Reply(200, "", ("Session", "6363636363636363636363636363")), Reply(200, "")]);
+        var client = new RtspClient(transport, "192.168.100.1");
+        await client.ConnectAsync(CancellationToken.None);
+        await client.SetupVideoAsync(CancellationToken.None);
+
+        var reply = await client.TeardownAsync(CancellationToken.None);
+
+        reply.IsSuccess.ShouldBeTrue();
+        transport.Sent[^1].ShouldStartWith("TEARDOWN rtsp://192.168.100.1:8080/?action=stream RTSP/1.0");
+        transport.Sent[^1].ShouldContain("Session: 6363636363636363636363636363");
+    }
+
+    [Fact]
+    public async Task Stream_bytes_are_read_straight_from_the_connection_once_nothing_is_carried_over()
+    {
+        var transport = new ScriptedTransport([Reply(200, ""), [0x80, 0x1A, 9, 9]]);
+        var client = new RtspClient(transport, "192.168.100.1");
+        await client.ConnectAsync(CancellationToken.None);
+        await client.OptionsAsync(CancellationToken.None);
+        await transport.SendAsync(Array.Empty<byte>(), CancellationToken.None);
+
+        var stream = await client.ReadStreamAsync(CancellationToken.None);
+
+        stream.ToArray().ShouldBe(new byte[] { 0x80, 0x1A, 9, 9 });
+    }
+
+    [Theory]
+    [InlineData("\r\n\r\n")]
+    [InlineData("RTSP/1.0\r\n\r\n")]
+    [InlineData("RTSP/1.0 OK fine\r\n\r\n")]
+    public async Task A_reply_with_no_readable_status_is_reported(string reply)
+    {
+        var client = new RtspClient(new ScriptedTransport([Encoding.ASCII.GetBytes(reply)]), "192.168.100.1");
+
+        await Should.ThrowAsync<RtspException>(() => client.OptionsAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task A_header_line_with_no_colon_is_ignored_rather_than_fatal()
+    {
+        var reply = Encoding.ASCII.GetBytes("RTSP/1.0 200 OK\r\nCSeq: 1\r\nnonsense\r\nPublic: DESCRIBE\r\n\r\n");
+        var client = new RtspClient(new ScriptedTransport([reply]), "192.168.100.1");
+
+        var options = await client.OptionsAsync(CancellationToken.None);
+
+        options.Header("Public").ShouldBe("DESCRIBE");
+        options.Header("nonsense").ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task A_body_cut_short_by_the_camera_hanging_up_is_returned_as_far_as_it_got()
+    {
+        var reply = Encoding.ASCII.GetBytes("RTSP/1.0 200 OK\r\nContent-Length: 100\r\n\r\nv=0\r\n");
+        var client = new RtspClient(new ScriptedTransport([reply]), "192.168.100.1");
+
+        var describe = await client.DescribeAsync(CancellationToken.None);
+
+        describe.Body.ShouldBe("v=0\r\n");
+    }
+
+    [Fact]
+    public async Task A_content_length_that_is_not_a_number_means_no_body()
+    {
+        var reply = Encoding.ASCII.GetBytes("RTSP/1.0 200 OK\r\nContent-Length: lots\r\n\r\n");
+        var client = new RtspClient(new ScriptedTransport([reply]), "192.168.100.1");
+
+        (await client.DescribeAsync(CancellationToken.None)).Body.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Disposing_the_client_closes_its_connection()
+    {
+        var transport = new ScriptedTransport([]);
+        var client = new RtspClient(transport, "192.168.100.1");
+        await client.ConnectAsync(CancellationToken.None);
+
+        await client.DisposeAsync();
+
+        transport.IsConnected.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void A_client_needs_a_transport_and_a_host()
+    {
+        Should.Throw<ArgumentNullException>(() => new RtspClient(null!, "192.168.100.1"));
+        Should.Throw<ArgumentException>(() => new RtspClient(new ScriptedTransport([]), " "));
+    }
+
+    [Fact]
+    public void The_exception_carries_its_message_and_cause()
+    {
+        var cause = new IOException("cause");
+
+        new RtspException().Message.ShouldNotBeNullOrWhiteSpace();
+        new RtspException("broken", cause).InnerException.ShouldBe(cause);
+    }
+
     private static byte[] Reply(int status, string body, params (string Name, string Value)[] headers)
     {
         var text = new StringBuilder($"RTSP/1.0 {status} OK\r\nCSeq: 1\r\n");

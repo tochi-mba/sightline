@@ -131,4 +131,55 @@ public sealed class MenuCatalogTests
         catalogue.Settings.Count.ShouldBe(1);
         catalogue.Settings[0].Name.ShouldBe("Good");
     }
+
+    [Fact]
+    public void Each_setting_carries_the_default_the_camera_declared()
+    {
+        Reference().Find(MenuIds.LoopRecording)!.Default.ShouldBe(3);
+        Reference().Find(MenuIds.RecordExposure)!.Default.ShouldBe(6);
+    }
+
+    [Fact]
+    public void A_document_that_is_not_well_formed_is_refused_with_the_reason()
+    {
+        var refused = Should.Throw<GpSockProtocolException>(() => MenuCatalog.Parse("<Menu><Category></Menu>"));
+
+        refused.InnerException.ShouldBeOfType<System.Xml.XmlException>();
+    }
+
+    [Fact]
+    public void A_category_with_no_name_is_filed_under_other()
+    {
+        var xml = """
+            <Menu><Categories><Category><Settings>
+              <Setting><Name>Loose</Name><ID>0x0042</ID><Type>0x00</Type></Setting>
+            </Settings></Category></Categories></Menu>
+            """;
+
+        MenuCatalog.Parse(xml).Settings[0].Category.ShouldBe("Other");
+    }
+
+    [Fact]
+    public void Values_and_numbers_that_cannot_be_read_are_left_out_or_defaulted()
+    {
+        var xml = """
+            <Menu><Categories><Category><Name>Odd</Name><Settings>
+              <Setting><Name>Oddities</Name><ID>0x0050</ID><Type>banana</Type><Default>0xZZ</Default>
+                <Values>
+                  <Value><ID>0x01</ID><Name>Kept</Name></Value>
+                  <Value><ID>0x02</ID></Value>
+                  <Value><Name>No id</Name></Value>
+                  <Value><ID>0xQQ</ID><Name>Bad hex</Name></Value>
+                  <Value><ID>seven</ID><Name>Not a number</Name></Value>
+                  <Value><ID>9</ID><Name>Plain</Name></Value>
+                </Values></Setting>
+            </Settings></Category></Categories></Menu>
+            """;
+
+        var setting = MenuCatalog.Parse(xml).Settings[0];
+
+        setting.Choices.ShouldBe([new MenuChoice(1, "Kept"), new MenuChoice(9, "Plain")]);
+        setting.Kind.ShouldBe(MenuSettingKind.Choice);
+        setting.Default.ShouldBe(0);
+    }
 }
