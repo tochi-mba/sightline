@@ -1,0 +1,27 @@
+# Line endings in the repository are LF. A checkout gets CRLF for the Windows projects' own file
+# types, matching .editorconfig, so a formatter never rewrites every line of a file it touches.
+* text=auto eol=lf
+
+*.cs text eol=crlf
+*.csproj text eol=crlf
+*.props text eol=crlf
+*.targets text eol=crlf
+*.axaml text eol=crlf
+*.ps1 text eol=crlf
+*.slnx text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Declared rather than detected. A golden vector that happens to contain no NUL byte would be
+# treated as text and have its line endings converted, silently changing bytes two languages assert.
+*.bin binary
+*.jpg binary
+*.png binary
+*.jar binary
+*.apk binary
+*.zip binary
+*.exe binary
+*.dll binary

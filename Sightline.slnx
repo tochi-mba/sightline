@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/protocol/">
+    <Project Path="protocol/dotnet/Sightline.Protocol/Sightline.Protocol.csproj" />
+    <Project Path="protocol/dotnet/Sightline.Protocol.Tests/Sightline.Protocol.Tests.csproj" />
+  </Folder>
+  <Folder Name="/windows/">
+    <Project Path="apps/windows/src/Sightline.Core/Sightline.Core.csproj" />
+    <Project Path="apps/windows/src/Sightline.Cli/Sightline.Cli.csproj" />
+  </Folder>
+</Solution>

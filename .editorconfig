@@ -1,0 +1,53 @@
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+indent_style = space
+trim_trailing_whitespace = true
+
+# CRLF for the Windows projects' own file types and nothing else. Set repository-wide it would tell
+# ktlint on Linux to rewrite every Kotlin file's line endings.
+[*.{cs,csproj,props,targets,axaml,ps1,slnx}]
+end_of_line = crlf
+
+[*.{cs,csproj,props,targets}]
+indent_size = 4
+
+[*.axaml]
+indent_size = 2
+
+[*.{kt,kts}]
+indent_size = 4
+max_line_length = 120
+# intellij_idea rather than ktlint_official: the official style rewrites signatures to its own
+# taste, which puts a formatter's opinion into every diff.
+ktlint_code_style = intellij_idea
+ktlint_function_naming_ignore_when_annotated_with = Composable
+ktlint_standard_class-signature = disabled
+ktlint_standard_function-signature = disabled
+ktlint_standard_blank-line-between-when-conditions = disabled
+
+[*.{md,yml,yaml,json,xml}]
+indent_size = 2
+
+[*.py]
+indent_size = 4
+max_line_length = 100
+
+[*.cs]
+csharp_style_namespace_declarations = file_scoped:error
+dotnet_style_require_accessibility_modifiers = for_non_interface_members:error
+
+# Dead code fails the build: an unused member, an unread field or a needless using is something
+# every later reader has to work out is not there for a reason.
+dotnet_diagnostic.IDE0005.severity = warning
+dotnet_diagnostic.IDE0051.severity = warning
+dotnet_diagnostic.IDE0052.severity = warning
+dotnet_diagnostic.CA1812.severity = warning
+
+# CA1859 trades an interface for a concrete type to save a virtual call; seams here are interfaces
+# so tests can substitute them, which is the whole point of the design.
+dotnet_diagnostic.CA1859.severity = none
+# CA1716 protects callers in other .NET languages; Sightline publishes no library.
+dotnet_diagnostic.CA1716.severity = none

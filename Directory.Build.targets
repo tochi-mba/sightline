@@ -1,0 +1,17 @@
+<Project>
+
+  <!-- Here rather than in Directory.Build.props: props are imported before a project's own
+       properties, so a condition on IsTestProject there never sees the value the test project sets.
+       The documentation file exists only so the compiler reports unused usings; shipping it would
+       put every internal comment in this codebase inside the download. -->
+  <PropertyGroup>
+    <DocumentationFile>$(IntermediateOutputPath)$(AssemblyName).xml</DocumentationFile>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
+    <IsPackable>false</IsPackable>
+    <!-- Test names are sentences, and the underscores are what keep them readable in a runner. -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+</Project>

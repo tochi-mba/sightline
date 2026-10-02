@@ -1,0 +1,32 @@
+<Project>
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- The recommended rule set, pinned to a band rather than `latest`: with `latest`, a commit
+         that passed today can fail tomorrow on a newer SDK with no change of its own. -->
+    <AnalysisLevel>10.0-recommended</AnalysisLevel>
+    <!-- Generated so the build reports unused usings, which the compiler only tracks when it is
+         writing documentation. Redirected out of the output in Directory.Build.targets. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <AllowedReferenceRelatedFileExtensions>.pdb</AllowedReferenceRelatedFileExtensions>
+    <CopyDocumentationFileToOutputDirectory>false</CopyDocumentationFileToOutputDirectory>
+    <PublishDocumentationFile>false</PublishDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Company>REX Technologies</Company>
+    <Authors>REX Technologies</Authors>
+    <Product>Sightline</Product>
+    <Copyright>Copyright (c) 2026 REX Technologies</Copyright>
+    <!-- VERSION at the repository root is the one version every build reads. -->
+    <VersionPrefix>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</VersionPrefix>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+</Project>

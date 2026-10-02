@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Sightline.Protocol.Tests</RootNamespace>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Sightline.Protocol/Sightline.Protocol.csproj" />
+  </ItemGroup>
+
+  <!-- The committed vectors, including the reference camera's own menu, are the test data. -->
+  <ItemGroup>
+    <None Include="../../golden/**/*" CopyToOutputDirectory="PreserveNewest" LinkBase="golden" />
+  </ItemGroup>
+
+</Project>

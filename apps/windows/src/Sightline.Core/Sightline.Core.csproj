@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Sightline.Core</RootNamespace>
+    <Description>Sessions, network choices and camera logic shared by the app and the command line.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../../protocol/dotnet/Sightline.Protocol/Sightline.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>
