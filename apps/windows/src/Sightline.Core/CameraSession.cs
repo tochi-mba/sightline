@@ -33,6 +33,16 @@ public sealed class CameraSession : IAsyncDisposable
     /// <summary>The control channel.</summary>
     public GpSockConnection Control { get; }
 
+    /// <summary>
+    /// Receives one line per step of starting and running the stream, when set.
+    /// </summary>
+    /// <remarks>
+    /// The camera gives no error when a stream fails to start; it simply sends nothing. Knowing
+    /// which step went quiet is the difference between a fix and a guess, and a failed attempt can
+    /// leave the camera needing a restart, so each one has to say as much as it can.
+    /// </remarks>
+    public Action<string>? Trace { get; set; }
+
     /// <summary>Opens a session against a real camera, binding to the right local address.</summary>
     /// <param name="camera">The camera's address; the family default when omitted.</param>
     /// <param name="cancellationToken">Gives up connecting.</param>
@@ -121,20 +131,37 @@ public sealed class CameraSession : IAsyncDisposable
             await StartStreamAsync(rtsp, cancellationToken).ConfigureAwait(false);
 
             var reassembler = new RtpJpegReassembler();
+            var received = 0L;
             while (!cancellationToken.IsCancellationRequested)
             {
                 var bytes = await ReadOrStallAsync(rtsp, cancellationToken).ConfigureAwait(false);
                 if (bytes.IsEmpty)
                 {
+                    Trace?.Invoke($"rtsp: the camera closed the stream after {received} bytes");
                     yield break;
                 }
 
+                if (received == 0)
+                {
+                    Trace?.Invoke($"rtsp: first stream bytes arrived: {Convert.ToHexString(bytes.Span[..Math.Min(16, bytes.Length)])}");
+                }
+
+                received += bytes.Length;
                 foreach (var frame in reassembler.Push(bytes.Span))
                 {
                     if (RtpJpegReassembler.LooksLikeJpeg(frame.Jpeg))
                     {
                         yield return frame;
                     }
+                    else
+                    {
+                        Trace?.Invoke($"rtsp: a {frame.Jpeg.Length}-byte frame was not a whole JPEG and was skipped");
+                    }
+                }
+
+                if (Trace is not null && reassembler.PacketsRead == 0 && received > 64 * 1024)
+                {
+                    Trace($"rtsp: {received} bytes arrived but none parsed as an RTP packet");
                 }
             }
         }
@@ -169,16 +196,25 @@ public sealed class CameraSession : IAsyncDisposable
         deadline.CancelAfter(StartTimeout);
         try
         {
+            Trace?.Invoke("control: RestartStreaming ...");
             await Control.StartStreamingAsync(deadline.Token).ConfigureAwait(false);
+            Trace?.Invoke("control: RestartStreaming acknowledged");
+
+            Trace?.Invoke($"rtsp: connecting to {host}:{RtspClient.Port} ...");
             await rtsp.ConnectAsync(deadline.Token).ConfigureAwait(false);
-            await rtsp.DescribeAsync(deadline.Token).ConfigureAwait(false);
+            Trace?.Invoke("rtsp: connected; DESCRIBE ...");
+            var describe = await rtsp.DescribeAsync(deadline.Token).ConfigureAwait(false);
+            Trace?.Invoke($"rtsp: DESCRIBE {describe.StatusCode}, {describe.Body.Length} bytes of SDP");
+
             var setup = await rtsp.SetupVideoAsync(deadline.Token).ConfigureAwait(false);
+            Trace?.Invoke($"rtsp: SETUP {setup.StatusCode}, session {rtsp.Session ?? "(none)"}");
             if (!setup.IsSuccess)
             {
                 throw new RtspException($"The camera refused the video track ({setup.StatusCode}).");
             }
 
             var play = await rtsp.PlayAsync(deadline.Token).ConfigureAwait(false);
+            Trace?.Invoke($"rtsp: PLAY {play.StatusCode}");
             if (!play.IsSuccess)
             {
                 throw new RtspException($"The camera would not start the stream ({play.StatusCode}).");

@@ -168,6 +168,12 @@ internal static class Program
     private static async Task<int> Snapshot(CameraSession session, Options options, CancellationToken cancellationToken)
     {
         var path = options.Value("--out") ?? $"sightline-{DateTime.Now:yyyyMMdd-HHmmss}.jpg";
+        if (options.Has("--verbose"))
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            session.Trace = line => Console.Error.WriteLine($"  [{clock.Elapsed.TotalSeconds,5:0.00}s] {line}");
+        }
+
         var frame = await session.GrabFrameAsync(TimeSpan.FromSeconds(15), cancellationToken);
         await File.WriteAllBytesAsync(path, frame.Jpeg, cancellationToken);
         Console.WriteLine($"  {frame.Width}x{frame.Height} picture saved to {Path.GetFullPath(path)} ({frame.Jpeg.Length:N0} bytes).");
