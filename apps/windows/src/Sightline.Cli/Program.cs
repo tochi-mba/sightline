@@ -1,6 +1,9 @@
 using System.Globalization;
 using System.Reflection;
 using Sightline.Core;
+using Sightline.Core.Connectivity;
+using Sightline.Platform.Windows.Network;
+using Sightline.Platform.Windows.Wlan;
 using Sightline.Protocol.GpSock;
 using Sightline.Protocol.Rtp;
 
@@ -48,8 +51,8 @@ internal static class Program
             return options.Command switch
             {
                 "adapters" => Adapters(),
-                "connect" => Connect(options),
-                "disconnect" => Disconnect(options),
+                "connect" => await Connect(options, cancel.Token),
+                "disconnect" => await Disconnect(),
                 "status" => await WithCamera(Status, cancel.Token),
                 "settings" => await WithCamera(Settings, cancel.Token),
                 "files" => await WithCamera(Files, cancel.Token),
@@ -93,7 +96,15 @@ internal static class Program
     {
         using var connecting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         connecting.CancelAfter(TimeSpan.FromSeconds(8));
-        await using var session = await CameraSession.OpenAsync(null, connecting.Token);
+        // Send from the adapter `sightline connect` put on the camera when there is one; Windows keeps
+        // a disconnected adapter's old address on record, so "any address on the subnet" can be dead.
+        var held = LinkStateStore.Default.Load();
+        var local = held is null
+            ? null
+            : CameraAddress.LocalAddressFor(CameraAddress.Default, new SystemNetworkState(CameraAddress.Default).AddressesOn(held.AdapterId));
+        await using var session = local is null
+            ? await CameraSession.OpenAsync(CameraAddress.Default, CameraAddress.RequireLocalAddressFor(CameraAddress.Default), connecting.Token)
+            : await CameraSession.OpenAsync(CameraAddress.Default, local, connecting.Token);
         return await action(session, cancellationToken);
     }
 
@@ -182,114 +193,117 @@ internal static class Program
 
     private static int Adapters()
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            Error("Listing Wi-Fi adapters is only supported on Windows.");
-            return ExitCode.Unavailable;
-        }
-
-        var adapters = WindowsWifi.Adapters();
+        var wlan = new WindowsWlanClient();
+        var network = new SystemNetworkState(CameraAddress.Default);
+        var adapters = wlan.Adapters();
         if (adapters.Count == 0)
         {
             Console.WriteLine("  No Wi-Fi adapters.");
             return ExitCode.Unavailable;
         }
 
-        foreach (var adapter in adapters)
+        var choices = AdapterAdvisor.Assess(adapters, "the camera", a => network.InternetPathOtherThan(a.Id));
+        foreach (var choice in choices)
         {
-            Console.WriteLine($"  {adapter.Name,-12} {(adapter.IsIdle ? "idle" : $"on {adapter.ConnectedTo}"),-30} {adapter.Description}");
+            var adapter = choice.Adapter;
+            Console.WriteLine($"  {adapter.Name,-12} {(adapter.IsExternal ? "plug-in" : "built-in"),-9} "
+                + $"{(adapter.Connection is { } on ? $"on {on.Ssid}" : "free"),-28} {adapter.Description}");
+            Console.WriteLine($"  {"",-12} {choice.Explanation}");
         }
 
-        var choice = WindowsWifi.Choose(adapters);
-        if (choice is { } chosen)
-        {
-            Console.WriteLine();
-            Console.WriteLine(chosen.InterruptsInternet
-                ? $"  The camera would use {chosen.Adapter.Name}, which is this PC's Wi-Fi internet; it would pause."
-                : $"  The camera would use {chosen.Adapter.Name}. Nothing else changes.");
-        }
-
+        Console.WriteLine();
+        Console.WriteLine(AdapterAdvisor.Recommend(choices, null) is { } best
+            ? $"  sightline connect would use {best.Adapter.Name}."
+            : "  Every adapter is on a network. Choose one with --adapter and confirm with --yes.");
         return ExitCode.Success;
     }
 
-    private static int Connect(Options options)
+    private static async Task<int> Connect(Options options, CancellationToken cancellationToken)
     {
-        if (!OperatingSystem.IsWindows())
+        var wlan = new WindowsWlanClient();
+        var network = new SystemNetworkState(CameraAddress.Default);
+        var store = LinkStateStore.Default;
+        if (store.Load() is { } held)
         {
-            Error("Joining Wi-Fi is only supported on Windows. Join the camera's network yourself, then use the other commands.");
-            return ExitCode.Unavailable;
-        }
-
-        var adapters = WindowsWifi.Adapters();
-        var named = options.Value("--adapter");
-        WifiAdapter? adapter;
-        if (named is not null)
-        {
-            adapter = adapters.FirstOrDefault(a => a.Name.Equals(named, StringComparison.OrdinalIgnoreCase));
-        }
-        else
-        {
-            var choice = WindowsWifi.Choose(adapters);
-            if (choice is { InterruptsInternet: true } && !options.Has("--yes"))
-            {
-                Error($"The only Wi-Fi adapter, {choice.Value.Adapter.Name}, carries this PC's internet, which would pause.");
-                Console.Error.WriteLine("  Run again with --yes to go ahead, or plug in a second Wi-Fi adapter.");
-                return ExitCode.Usage;
-            }
-
-            adapter = choice?.Adapter;
-        }
-
-        if (adapter is null)
-        {
-            Error(named is null ? "No Wi-Fi adapter was found." : $"No Wi-Fi adapter is called '{named}'.");
-            return ExitCode.Unavailable;
-        }
-
-        var ssid = options.Value("--ssid");
-        if (ssid is null)
-        {
-            Error($"Name the camera's network with --ssid. Its Wi-Fi name starts with '{DefaultSsidPrefix}' and is on the camera's screen.");
+            Error($"Already connected through {held.AdapterName}. Run `sightline disconnect` first.");
             return ExitCode.Usage;
         }
 
-        var password = options.Value("--password") ?? DefaultPassword;
-        Console.WriteLine($"  Joining {ssid} on {adapter.Name}...");
-        Console.WriteLine(WindowsWifi.Join(adapter.Name, ssid, password));
-
-        for (var attempt = 0; attempt < 20; attempt++)
+        var adapters = wlan.Adapters();
+        var ssid = options.Value("--ssid") ?? await FindCameraAsync(wlan, adapters, cancellationToken);
+        if (ssid is null)
         {
-            Thread.Sleep(750);
-            if (CameraAddress.LocalAddressFor(CameraAddress.Default) is { } local)
-            {
-                Console.WriteLine($"  On the camera's network as {local}.");
-                return ExitCode.Success;
-            }
+            Error($"No camera network in range. Press the camera's Wi-Fi button, or name it with --ssid (it starts '{DefaultSsidPrefix}').");
+            return ExitCode.NoCamera;
         }
 
-        Error("Joined, but no address arrived from the camera. Is its Wi-Fi still on?");
-        return ExitCode.NoCamera;
+        var choices = AdapterAdvisor.Assess(adapters, ssid, a => network.InternetPathOtherThan(a.Id));
+        var named = options.Value("--adapter");
+        var choice = named is null
+            ? AdapterAdvisor.Recommend(choices, null)
+            : choices.FirstOrDefault(c => c.Adapter.Name.Equals(named, StringComparison.OrdinalIgnoreCase));
+        if (choice is null)
+        {
+            Error(named is not null
+                ? $"No Wi-Fi adapter is called '{named}'. `sightline adapters` lists them."
+                : adapters.Count == 0
+                    ? "This PC has no Wi-Fi adapter."
+                    : "Every Wi-Fi adapter is on a network. Choose one with --adapter and confirm with --yes; `sightline adapters` says what each would cost.");
+            return adapters.Count == 0 ? ExitCode.Unavailable : ExitCode.Usage;
+        }
+
+        if (choice.NeedsConsent && !options.Has("--yes"))
+        {
+            Error(choice.Explanation);
+            Console.Error.WriteLine("  Run again with --yes to go ahead.");
+            return ExitCode.Usage;
+        }
+
+        var link = new CameraLink(wlan, network);
+        Console.WriteLine($"  Joining {ssid} on {choice.Adapter.Name}...");
+        try
+        {
+            var local = await link.JoinAsync(choice, ssid, options.Value("--password") ?? DefaultPassword,
+                choice.NeedsConsent, CameraAddress.Default, cancellationToken);
+            store.Save(link.State!);
+            Console.WriteLine($"  On the camera's network as {local}.");
+            return ExitCode.Success;
+        }
+        catch (CameraLinkException exception)
+        {
+            Error(exception.Message);
+            return ExitCode.NoCamera;
+        }
     }
 
-    private static int Disconnect(Options options)
+    private static async Task<string?> FindCameraAsync(
+        WindowsWlanClient wlan, IReadOnlyList<Sightline.Core.Connectivity.WifiAdapter> adapters, CancellationToken cancellationToken)
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            Error("Leaving Wi-Fi is only supported on Windows.");
-            return ExitCode.Unavailable;
-        }
+        await Task.WhenAll(adapters.Select(a => wlan.ScanAsync(a.Id, cancellationToken)));
+        return adapters
+            .SelectMany(a => wlan.Networks(a.Id))
+            .Where(n => n.Ssid.StartsWith(DefaultSsidPrefix, StringComparison.Ordinal))
+            .OrderByDescending(n => n.SignalPercent)
+            .Select(n => n.Ssid)
+            .FirstOrDefault();
+    }
 
-        var ssid = options.Value("--ssid");
-        var adapter = options.Value("--adapter")
-            ?? WindowsWifi.Adapters().FirstOrDefault(a => a.ConnectedTo?.StartsWith(DefaultSsidPrefix, StringComparison.Ordinal) == true)?.Name;
-        if (adapter is null || ssid is null && (ssid = WindowsWifi.Adapters().FirstOrDefault(a => a.Name == adapter)?.ConnectedTo) is null)
+    private static async Task<int> Disconnect()
+    {
+        var store = LinkStateStore.Default;
+        if (store.Load() is not { } state)
         {
-            Console.WriteLine("  Not on a camera's network.");
+            Console.WriteLine("  sightline is not connected to a camera.");
             return ExitCode.Success;
         }
 
-        WindowsWifi.Leave(adapter, ssid);
-        Console.WriteLine($"  Left {ssid} and removed its profile from {adapter}.");
+        var link = new CameraLink(new WindowsWlanClient(), new SystemNetworkState(CameraAddress.Default));
+        link.Resume(state);
+        var restored = await link.LeaveAsync();
+        store.Clear();
+        Console.WriteLine(restored is null
+            ? $"  Left the camera on {state.AdapterName}."
+            : $"  Left the camera; {state.AdapterName} is back on {restored}.");
         return ExitCode.Success;
     }
 
@@ -316,8 +330,8 @@ internal static class Program
 
               Getting on the camera's Wi-Fi (Windows)
                 adapters                          Which Wi-Fi adapter the camera would use, and why
-                connect --ssid NAME [--password P] [--adapter A] [--yes]
-                disconnect [--ssid NAME] [--adapter A]
+                connect [--ssid NAME] [--password P] [--adapter A] [--yes]
+                disconnect                        Leave the camera and put the adapter back
 
               Talking to the camera
                 status                            Mode, recording, power

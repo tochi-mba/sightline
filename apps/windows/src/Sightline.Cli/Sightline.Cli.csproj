@@ -2,7 +2,8 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- Windows: joining the camera's Wi-Fi goes through Windows' own Wi-Fi service. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>Sightline.Cli</RootNamespace>
     <AssemblyName>sightline</AssemblyName>
     <Description>The sightline command: drive a Wi-Fi action camera from a terminal.</Description>
@@ -11,6 +12,11 @@
   <ItemGroup>
     <ProjectReference Include="../../../../protocol/dotnet/Sightline.Protocol/Sightline.Protocol.csproj" />
     <ProjectReference Include="../Sightline.Core/Sightline.Core.csproj" />
+    <ProjectReference Include="../Sightline.Platform.Windows/Sightline.Platform.Windows.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sightline.Cli.Tests" />
   </ItemGroup>
 
 </Project>
