@@ -1,0 +1,66 @@
+{
+  "url": "https://api.github.com/repos/tochi-mba/sightline/releases/250000001",
+  "html_url": "https://github.com/tochi-mba/sightline/releases/tag/latest-android",
+  "id": 250000001,
+  "tag_name": "latest-android",
+  "target_commitish": "main",
+  "name": "Sightline for Android, rolling build",
+  "draft": false,
+  "prerelease": true,
+  "created_at": "2026-10-01T17:58:40Z",
+  "published_at": "2026-10-01T18:04:11Z",
+  "assets": [
+    {
+      "url": "https://api.github.com/repos/tochi-mba/sightline/releases/assets/300000001",
+      "id": 300000001,
+      "name": "Sightline.apk",
+      "label": "",
+      "content_type": "application/vnd.android.package-archive",
+      "state": "uploaded",
+      "size": 32925696,
+      "download_count": 12,
+      "created_at": "2026-10-01T18:03:52Z",
+      "updated_at": "2026-10-01T18:04:09Z",
+      "browser_download_url": "https://github.com/tochi-mba/sightline/releases/download/latest-android/Sightline.apk"
+    },
+    {
+      "url": "https://api.github.com/repos/tochi-mba/sightline/releases/assets/300000002",
+      "id": 300000002,
+      "name": "Sightline-0.1.0-rolling.42.gabc1234.apk",
+      "label": "",
+      "content_type": "application/vnd.android.package-archive",
+      "state": "uploaded",
+      "size": 32925696,
+      "download_count": 3,
+      "created_at": "2026-10-01T18:03:55Z",
+      "updated_at": "2026-10-01T18:04:10Z",
+      "browser_download_url": "https://github.com/tochi-mba/sightline/releases/download/latest-android/Sightline-0.1.0-rolling.42.gabc1234.apk"
+    },
+    {
+      "url": "https://api.github.com/repos/tochi-mba/sightline/releases/assets/300000003",
+      "id": 300000003,
+      "name": "android-release.json",
+      "label": "",
+      "content_type": "application/json",
+      "state": "uploaded",
+      "size": 412,
+      "download_count": 40,
+      "created_at": "2026-10-01T18:04:00Z",
+      "updated_at": "2026-10-01T18:04:10Z",
+      "browser_download_url": "https://github.com/tochi-mba/sightline/releases/download/latest-android/android-release.json"
+    },
+    {
+      "url": "https://api.github.com/repos/tochi-mba/sightline/releases/assets/300000004",
+      "id": 300000004,
+      "name": "SHA256SUMS.txt",
+      "label": "",
+      "content_type": "text/plain",
+      "state": "uploaded",
+      "size": 184,
+      "download_count": 1,
+      "created_at": "2026-10-01T18:04:01Z",
+      "updated_at": "2026-10-01T18:04:11Z",
+      "browser_download_url": "https://github.com/tochi-mba/sightline/releases/download/latest-android/SHA256SUMS.txt"
+    }
+  ]
+}

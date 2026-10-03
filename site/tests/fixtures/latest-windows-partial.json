@@ -1,0 +1,40 @@
+{
+  "url": "https://api.github.com/repos/tochi-mba/sightline/releases/250000003",
+  "html_url": "https://github.com/tochi-mba/sightline/releases/tag/latest-windows",
+  "id": 250000003,
+  "tag_name": "latest-windows",
+  "target_commitish": "main",
+  "name": "Sightline for Windows, rolling build that carries only the installer",
+  "draft": false,
+  "prerelease": true,
+  "created_at": "2026-09-30T20:01:12Z",
+  "published_at": "2026-09-30T20:06:50Z",
+  "assets": [
+    {
+      "url": "https://api.github.com/repos/tochi-mba/sightline/releases/assets/300000021",
+      "id": 300000021,
+      "name": "Sightline-Setup.exe",
+      "label": "",
+      "content_type": "application/x-msdownload",
+      "state": "uploaded",
+      "size": 97517568,
+      "download_count": 2,
+      "created_at": "2026-09-30T20:06:01Z",
+      "updated_at": "2026-09-30T20:06:41Z",
+      "browser_download_url": "https://github.com/tochi-mba/sightline/releases/download/latest-windows/Sightline-Setup.exe"
+    },
+    {
+      "url": "https://api.github.com/repos/tochi-mba/sightline/releases/assets/300000022",
+      "id": 300000022,
+      "name": "Sightline-Setup-0.1.0-rolling.38.g9f8e7d6.exe",
+      "label": "",
+      "content_type": "application/x-msdownload",
+      "state": "uploaded",
+      "size": 97517568,
+      "download_count": 0,
+      "created_at": "2026-09-30T20:06:04Z",
+      "updated_at": "2026-09-30T20:06:44Z",
+      "browser_download_url": "https://github.com/tochi-mba/sightline/releases/download/latest-windows/Sightline-Setup-0.1.0-rolling.38.g9f8e7d6.exe"
+    }
+  ]
+}

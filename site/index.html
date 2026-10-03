@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Sightline is an early Android and Windows toolkit for a tested Generalplus Wi-Fi action camera. Download preview builds and see exactly what has been verified on real hardware.">
+<meta name="robots" content="index,follow">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#080A09">
+<meta property="og:title" content="Sightline — honest tools for a Wi-Fi action camera — REX Technologies">
+<meta property="og:description" content="Preview builds for Android and Windows, with every real-hardware claim tied to the public acceptance record.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tochi-mba.github.io/sightline/">
+<meta property="og:site_name" content="Sightline">
+<meta name="twitter:card" content="summary">
+<link rel="canonical" href="https://tochi-mba.github.io/sightline/">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+<noscript><style>@media(max-width:760px){.site-nav{display:flex!important;position:static!important;flex-direction:column}.menu-button{display:none!important}}</style></noscript>
+<title>Sightline — honest tools for a Wi-Fi action camera — REX Technologies</title>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="ambient ambient-one" aria-hidden="true"></div>
+<div class="ambient ambient-two" aria-hidden="true"></div>
+
+<header class="site-header">
+  <div class="container nav-wrap">
+    <a class="brand" href="#top" aria-label="Sightline, by REX Technologies">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="7.5"/><path d="M16 3.5v6M16 22.5v6M3.5 16h6M22.5 16h6"/><circle class="brand-dot" cx="16" cy="16" r="1.8"/></svg></span>
+      <span class="brand-lockup"><span class="brand-company">REX Technologies</span><span class="brand-name">Sightline</span></span>
+    </a>
+    <button class="menu-button" id="menu-button" type="button" aria-expanded="false" aria-controls="site-nav"><span class="sr-only">Toggle navigation</span><span></span><span></span></button>
+    <nav id="site-nav" class="site-nav" aria-label="Primary navigation">
+      <a href="#download">Download</a>
+      <a href="#cameras">Cameras</a>
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a href="#faq">FAQ</a>
+      <a class="nav-github" href="https://github.com/tochi-mba/sightline">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero container" id="top">
+    <div class="hero-copy">
+      <p class="eyebrow signal">Wi-Fi action cameras · Android · Windows</p>
+      <h1>See the camera clearly. <span>Claim only what works.</span></h1>
+      <p class="hero-lede">
+        Sightline is an early Android and Windows toolkit for a Generalplus Wi-Fi action camera.
+        Its command line has connected to the reference camera, read its status and settings, and
+        saved a real frame. Every claim below links back to the dated acceptance record.
+      </p>
+      <div class="hero-actions">
+        <a class="button button-primary" href="#download">Download Sightline</a>
+        <a class="button button-secondary" href="#cameras">Will it work with my camera?</a>
+      </div>
+      <div class="hero-meta">
+        <span>Android preview package</span>
+        <span>Windows installer and portable app</span>
+        <span>Windows command line</span>
+        <span>MIT licensed</span>
+      </div>
+      <p class="hero-status"><span class="pill">Early preview</span> The Android app has no dated on-device acceptance yet, and Windows live view currently fails. <a href="#faq">See the exact status.</a></p>
+    </div>
+    <div class="viewfinder" aria-hidden="true">
+      <svg viewBox="0 0 320 200" focusable="false">
+        <path class="vf-grid" d="M107 0v200M213 0v200M0 67h320M0 133h320"/>
+        <path class="vf-corner" d="M22 50V22h28M270 22h28v28M298 150v28h-28M50 178H22v-28"/>
+        <circle class="vf-ring" cx="160" cy="100" r="30"/>
+        <path class="vf-cross" d="M160 56v20M160 124v20M116 100h20M184 100h20"/>
+        <circle class="vf-dot" cx="160" cy="100" r="3"/>
+        <circle class="vf-live" cx="42" cy="42" r="6"/>
+      </svg>
+    </div>
+  </section>
+
+  <section class="section container" id="about">
+    <div class="section-heading">
+      <p class="eyebrow signal">What Sightline is</p>
+      <h2>One app for the camera you already own.</h2>
+      <p>
+        Sightline is an Android app, a Windows app and a command line built around the protocol of
+        one Generalplus camera. The protocol was measured on that camera and is
+        <a href="https://github.com/tochi-mba/sightline/blob/main/docs/PROTOCOL.md">written down in the open</a>.
+        Other cameras are not presented as supported until they have dated evidence.
+      </p>
+    </div>
+    <div class="facts">
+      <div><strong>One camera verified</strong><span>Generalplus firmware 20240708 V1.3, tested 2 October 2026.</span></div>
+      <div><strong>21 settings read</strong><span>The reference camera returned 21 settings in four categories.</span></div>
+      <div><strong>Real frames decoded</strong><span>28 of 28 JPEG frames reassembled at 640×360 and about 12.2 fps.</span></div>
+      <div><strong>Internet stayed up</strong><span>Verified on the reference Windows PC using separate camera and internet links.</span></div>
+    </div>
+  </section>
+
+  <section class="section container" id="download" aria-labelledby="download-title">
+    <div class="download">
+      <div class="download-top">
+        <p class="download-guess" id="download-guess" aria-live="polite">Choose the download for the device that will run it.</p>
+        <div class="chips" id="download-chips" role="group" aria-label="Show the downloads for" hidden>
+          <button class="chip" id="chip-android" type="button" aria-pressed="false">Android</button>
+          <button class="chip" id="chip-windows" type="button" aria-pressed="false">Windows</button>
+          <button class="chip" id="chip-other" type="button" aria-pressed="false">Something else</button>
+        </div>
+      </div>
+      <div class="download-head">
+        <p class="eyebrow signal">Download</p>
+        <h2 id="download-title">Sightline preview packages for Android and Windows</h2>
+        <p id="download-note">Every option opens the latest GitHub release until that release confirms the exact asset is attached. No download URL is guessed.</p>
+      </div>
+      <ul class="download-list" id="download-list">
+        <li class="download-item" id="download-apk">
+          <div class="download-phone" id="download-phone" hidden>
+            <p class="eyebrow signal">Get it on your phone</p>
+            <p>Open <strong>tochi-mba.github.io/sightline</strong> on the phone and download it there, or download it here and copy it across.</p>
+            <!-- The QR code's slot. Once site/apk-qr.svg has been generated and committed, put this
+                 line here, uncommented; until then the page references no file that does not exist.
+                 <img class="download-qr" src="apk-qr.svg" alt="A QR code that opens the Android download" width="148" height="148">
+            -->
+          </div>
+          <a class="download-link" href="https://github.com/tochi-mba/sightline/releases/latest"><span class="download-label">Android app</span><span class="download-file">View latest release</span></a>
+          <div class="download-text">
+            <p>Expected asset: <code>Sightline.apk</code>. On-device acceptance has not been run.</p>
+            <p class="download-meta" id="meta-apk" hidden></p>
+          </div>
+        </li>
+        <li class="download-item" id="download-setup">
+          <a class="download-link" href="https://github.com/tochi-mba/sightline/releases/latest"><span class="download-label">Windows installer</span><span class="download-file">View latest release</span></a>
+          <div class="download-text">
+            <p>Expected asset: <code>Sightline-Setup.exe</code>.</p>
+            <p class="download-meta" id="meta-setup" hidden></p>
+          </div>
+        </li>
+        <li class="download-item" id="download-portable">
+          <a class="download-link" href="https://github.com/tochi-mba/sightline/releases/latest"><span class="download-label">Windows portable app</span><span class="download-file">View latest release</span></a>
+          <div class="download-text">
+            <p>Expected asset: <code>Sightline-Portable.exe</code>.</p>
+            <p class="download-meta" id="meta-portable" hidden></p>
+          </div>
+        </li>
+        <li class="download-item" id="download-cli">
+          <a class="download-link" href="https://github.com/tochi-mba/sightline/releases/latest"><span class="download-label">Windows command line</span><span class="download-file">View latest release</span></a>
+          <div class="download-text">
+            <p>Expected asset: <code>sightline-cli.exe</code>. The CLI is the surface with end-to-end hardware acceptance.</p>
+            <p class="download-meta" id="meta-cli" hidden></p>
+          </div>
+        </li>
+      </ul>
+      <div class="download-foot">
+        <p>
+          Direct downloads appear only after GitHub's API reports an exact matching asset on the
+          latest release. If that lookup is unavailable, every control safely falls back to
+          <a href="https://github.com/tochi-mba/sightline/releases/latest">the latest release page</a>.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section container" id="cameras">
+    <div class="section-heading">
+      <p class="eyebrow signal">Cameras</p>
+      <h2>Will it work with my camera?</h2>
+      <p>Only the reference Generalplus camera has dated acceptance evidence. Similar hardware may behave differently.</p>
+    </div>
+    <div class="steps steps-two">
+      <div class="step">
+        <span class="step-number">Reference camera</span>
+        <h3><code>ActionCam_f8160c220c72</code></h3>
+        <p>Generalplus firmware <code>20240708 V1.3</code>, observed on 2 October 2026.</p>
+      </div>
+      <div class="step step-verified">
+        <span class="step-number">Compatibility rule</span>
+        <h3>Evidence before support</h3>
+        <p>A matching Wi-Fi name or chip family is a clue, not proof. Another camera becomes supported only after its result is dated in the acceptance record.</p>
+      </div>
+    </div>
+    <div class="camera-report">
+      <p>Tried Sightline with another camera, whether it worked or not? A camera report is how a model gets onto the list.</p>
+      <div class="hero-actions">
+        <a class="button button-primary" href="https://github.com/tochi-mba/sightline/issues/new?title=Camera%20report%3A%20&amp;body=Camera%2C%20as%20named%20on%20it%20or%20its%20box%3A%0A%0AHow%20its%20Wi-Fi%20name%20starts%20%28for%20example%20ActionCam_%3B%20leave%20off%20the%20rest%2C%20which%20can%20identify%20your%20camera%29%3A%0A%0AIs%20it%20at%20192.168.100.1%20once%20you%20have%20joined%20its%20Wi-Fi%3F%0A%0AFirmware%2C%20if%20you%20can%20see%20it%3A%0A%0AWhat%20worked%3A%0A%0AWhat%20did%20not%3A%0A">Send a camera report</a>
+        <a class="button button-secondary" href="https://github.com/tochi-mba/sightline/blob/main/docs/ACCEPTANCE.md">What has been tested, with dates</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section container" id="features">
+    <div class="section-heading">
+      <p class="eyebrow signal">What it does</p>
+      <h2>What has worked on the reference hardware.</h2>
+      <p>
+        These are dated observations, not a roadmap presented as a finished product. The complete
+        record—including failures and checks not yet run—is in the
+        <a href="https://github.com/tochi-mba/sightline/blob/main/docs/ACCEPTANCE.md">acceptance record</a>.
+      </p>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <h3>Connect and disconnect</h3>
+        <p>The Windows command line joined and left the reference camera. Its adapter choice kept the PC's default route on a separate tethered internet link.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Capture a real frame</h3>
+        <p><code>sightline snapshot</code> completed through the full stack and saved a picture from the reference camera.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Read the camera's menu</h3>
+        <p>The camera returned an 18,523-byte parameter file in 38 chunks, parsed as 21 settings across four categories.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Inspect status</h3>
+        <p>The reference camera acknowledged status requests with a 16-byte payload, and the command-line status check passed.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Decode the measured stream</h3>
+        <p>RTSP setup and playback succeeded; all 28 captured frames reassembled into valid 640×360 JPEGs at about 12.2 frames per second.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Find and configure from Windows</h3>
+        <p>The Windows app found the camera, connected, and displayed its real settings and firmware in the REX theme.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Explain a picture failure</h3>
+        <p>When its picture failed, the Windows app showed a reason rather than leaving a black view.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Current limitation: Windows live view</h3>
+        <p>The Windows app's live picture has not passed. It reads the menu before starting the stream, after which RTSP is unanswered.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Not yet accepted</h3>
+        <p>Taking a photo, toggling recording, changing a setting, and listing, downloading or deleting card files have no dated pass yet.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section container" id="install">
+    <div class="section-heading">
+      <p class="eyebrow signal">Install</p>
+      <h2>Start with the release notes.</h2>
+      <p>Preview packaging can change. GitHub's latest release is the source of truth for requirements, checksums and installation notes.</p>
+    </div>
+    <div class="tabs" id="install-tabs" role="tablist" aria-label="Install on" hidden>
+      <button class="tab" id="tab-android" type="button" role="tab" aria-selected="true" aria-controls="install-android">Android</button>
+      <button class="tab" id="tab-windows" type="button" role="tab" aria-selected="false" aria-controls="install-windows" tabindex="-1">Windows</button>
+    </div>
+    <div class="tab-panel" id="install-android" role="tabpanel" aria-labelledby="tab-android">
+      <h3 class="panel-title">On Android</h3>
+      <ol class="install-steps">
+        <li><strong>Open the latest GitHub release.</strong> Confirm that it actually contains <code>Sightline.apk</code> and read that release's notes.</li>
+        <li><strong>Download the APK on the Android device.</strong> Follow Android's own prompts for a package obtained outside its app store.</li>
+        <li><strong>Treat it as unverified hardware support.</strong> The acceptance record contains no dated Android on-device pass yet.</li>
+      </ol>
+    </div>
+    <div class="tab-panel" id="install-windows" role="tabpanel" aria-labelledby="tab-windows">
+      <h3 class="panel-title">On Windows</h3>
+      <ol class="install-steps">
+        <li><strong>Open the latest GitHub release.</strong> Choose <code>Sightline-Setup.exe</code>, <code>Sightline-Portable.exe</code> or <code>sightline-cli.exe</code> only when that exact asset is attached.</li>
+        <li><strong>Read the release notes.</strong> They carry the current Windows requirements and integrity information; this page does not guess them.</li>
+        <li><strong>Use the command line for the accepted path.</strong> On the reference PC, these operations passed on 2 October 2026:
+          <pre class="console"><code>.\sightline-cli.exe adapters
+.\sightline-cli.exe connect --ssid ActionCam_…
+.\sightline-cli.exe settings
+.\sightline-cli.exe snapshot --out frame.jpg</code></pre>
+        </li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="section container" id="faq">
+    <div class="section-heading">
+      <p class="eyebrow signal">FAQ</p>
+      <h2>Questions, answered plainly.</h2>
+    </div>
+    <div class="faq">
+      <details open>
+        <summary>Is Sightline finished?</summary>
+        <p>No. The Windows command-line path has passed several end-to-end checks on one camera, but the Windows app's live view fails and Android has no dated on-device acceptance. The <a href="https://github.com/tochi-mba/sightline/blob/main/docs/ACCEPTANCE.md">acceptance record</a> is the source of truth.</p>
+      </details>
+      <details>
+        <summary>What happened to the PC's internet during the test?</summary>
+        <p>On 2 October 2026, the reference PC joined the camera through a TP-Link USB Wi-Fi adapter while its default route stayed on a tethered link. An HTTP request still succeeded. The Android/mobile-data case was not run.</p>
+      </details>
+      <details>
+        <summary>Does the Windows app show live video?</summary>
+        <p>Not yet. That acceptance check currently fails because the app reads the menu before starting the stream and RTSP is then unanswered. The command-line snapshot path did pass.</p>
+      </details>
+      <details>
+        <summary>Will another Generalplus camera work?</summary>
+        <p>It might, but there is no dated evidence yet. Only the reference camera on firmware <code>20240708 V1.3</code> is represented as tested.</p>
+      </details>
+      <details>
+        <summary>Why do download controls sometimes open the release page?</summary>
+        <p>The page creates a direct download only after GitHub reports the exact asset on the latest release. If no release exists, an asset is missing, or the API cannot be reached, it falls back to the release page instead of guessing a URL.</p>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="container footer-wrap">
+    <span>© 2026 REX Technologies · Sightline</span>
+    <span>MIT licence. Not affiliated with any camera maker.</span>
+    <span class="footer-links">
+      <a href="https://github.com/tochi-mba/sightline">Source</a>
+      <a href="https://github.com/tochi-mba/sightline/blob/main/LICENSE">Licence</a>
+      <a href="https://github.com/tochi-mba/sightline/blob/main/docs/ACCEPTANCE.md">Acceptance record</a>
+      <a href="#top">Back to top <span aria-hidden="true">↑</span></a>
+    </span>
+  </div>
+</footer>
+<script type="module" src="app.js"></script>
+</body>
+</html>
