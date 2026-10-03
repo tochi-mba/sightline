@@ -113,7 +113,7 @@ internal static class Program
         var status = await session.Control.GetStatusAsync(cancellationToken);
         Console.WriteLine();
         Console.WriteLine($"  Mode       {status.Mode}");
-        Console.WriteLine($"  Recording  {(status.IsBusy ? "yes" : "no")}");
+        Console.WriteLine($"  Recording  {(status.IsRecording ? "yes" : "no")}");
         Console.WriteLine($"  Audio      {(status.RecordsAudio ? "on" : "off")}");
         Console.WriteLine($"  Power      {(status.OnExternalPower ? "external" : "battery")}");
         Console.WriteLine($"  Battery    {(status.BatteryPercent is { } b ? $"{b}%" : "not reported by this firmware")}");
@@ -170,7 +170,7 @@ internal static class Program
         await session.Control.SetModeAsync(CameraMode.Record, cancellationToken);
         await session.Control.ToggleRecordingAsync(cancellationToken);
         var status = await session.Control.GetStatusAsync(cancellationToken);
-        Console.WriteLine(status.IsBusy
+        Console.WriteLine(status.IsRecording
             ? "  Recording to the camera's card. Run `sightline record` again to stop."
             : "  Recording stopped.");
         return ExitCode.Success;

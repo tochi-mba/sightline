@@ -11,5 +11,6 @@
     <Project Path="apps/windows/src/Sightline.Platform.Windows/Sightline.Platform.Windows.csproj" />
     <Project Path="apps/windows/tests/Sightline.Core.Tests/Sightline.Core.Tests.csproj" />
     <Project Path="apps/windows/tests/Sightline.Platform.Windows.Tests/Sightline.Platform.Windows.Tests.csproj" />
+    <Project Path="apps/windows/tests/Sightline.App.Tests/Sightline.App.Tests.csproj" />
   </Folder>
 </Solution>

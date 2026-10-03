@@ -150,6 +150,58 @@ public sealed class LiveCameraService : ICameraService
     }
 
     /// <inheritdoc />
+    public Task<IReadOnlyList<CameraFile>> FilesAsync(CancellationToken cancellationToken) =>
+        InBrowseModeAsync(control => control.GetFileListAsync(cancellationToken), cancellationToken);
+
+    /// <inheritdoc />
+    public async Task<string> DownloadAsync(
+        CameraFile file,
+        string folder,
+        IProgress<long>? progress,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        ArgumentException.ThrowIfNullOrWhiteSpace(folder);
+        Directory.CreateDirectory(folder);
+
+        var temporary = Path.Combine(folder, $".{file.DisplayName}-{Guid.NewGuid():N}.part");
+        try
+        {
+            await using (var destination = new FileStream(
+                             temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                             bufferSize: 64 * 1024, useAsync: true))
+            {
+                await InBrowseModeAsync(
+                    control => control.DownloadAsync(file.Index, destination, progress, cancellationToken),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            var extension = DownloadedFileNaming.ExtensionFor(temporary);
+            var final = DownloadedFileNaming.AvailablePath(folder, file.DisplayName, extension);
+            File.Move(temporary, final);
+            return final;
+        }
+        catch
+        {
+            File.Delete(temporary);
+            throw;
+        }
+    }
+
+    /// <inheritdoc />
+    public Task DeleteAsync(CameraFile file, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        return InBrowseModeAsync(
+            async control =>
+            {
+                await control.DeleteFileAsync(file.Index, cancellationToken).ConfigureAwait(false);
+                return true;
+            },
+            cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task DisconnectAsync()
     {
         if (session is not null)
@@ -166,4 +218,23 @@ public sealed class LiveCameraService : ICameraService
 
     private CameraSession Open() =>
         session ?? throw new InvalidOperationException("Connect to the camera first.");
+
+    private async Task<T> InBrowseModeAsync<T>(
+        Func<GpSockConnection, Task<T>> action,
+        CancellationToken cancellationToken)
+    {
+        var control = Open().Control;
+        await control.SetModeAsync(CameraMode.Browse, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await action(control).ConfigureAwait(false);
+        }
+        finally
+        {
+            // The caller's cancellation must still leave the camera ready for preview. A short,
+            // independent deadline makes that best effort bounded instead of skipping it.
+            using var restore = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await control.SetModeAsync(CameraMode.Record, restore.Token).ConfigureAwait(false);
+        }
+    }
 }

@@ -38,22 +38,33 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private readonly ICameraService camera;
     private readonly Func<byte[], Bitmap?> decode;
     private readonly Action<Action> onUiThread;
+    private readonly Func<string> downloadFolder;
     private CancellationTokenSource? live;
     private Task? liveTask;
     private byte[]? lastJpeg;
 
     /// <summary>Creates the view model over a real camera and the real UI thread.</summary>
     public MainViewModel(ICameraService camera)
-        : this(camera, DecodeJpeg, action => Dispatcher.UIThread.Post(action))
+        : this(
+            camera,
+            DecodeJpeg,
+            action => Dispatcher.UIThread.Post(action),
+            () => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "Sightline"))
     {
     }
 
     /// <summary>Creates the view model with the UI plumbing supplied, for tests.</summary>
-    public MainViewModel(ICameraService camera, Func<byte[], Bitmap?> decode, Action<Action> onUiThread)
+    public MainViewModel(
+        ICameraService camera,
+        Func<byte[], Bitmap?> decode,
+        Action<Action> onUiThread,
+        Func<string>? downloadFolder = null)
     {
         this.camera = camera ?? throw new ArgumentNullException(nameof(camera));
         this.decode = decode ?? throw new ArgumentNullException(nameof(decode));
         this.onUiThread = onUiThread ?? throw new ArgumentNullException(nameof(onUiThread));
+        this.downloadFolder = downloadFolder ?? (() => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "Sightline"));
     }
 
     /// <summary>Each camera in range, once per adapter that can see it.</summary>
@@ -61,6 +72,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>The camera's settings, once connected.</summary>
     public ObservableCollection<SettingViewModel> Settings { get; } = [];
+
+    /// <summary>The files on the camera's card while the library is open.</summary>
+    public ObservableCollection<CameraFileViewModel> Files { get; } = [];
 
     /// <summary>The camera, and the adapter to reach it through.</summary>
     [ObservableProperty]
@@ -98,8 +112,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>Where the window is.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsDisconnected), nameof(IsLive), nameof(IsConnecting))]
-    [NotifyCanExecuteChangedFor(nameof(ConnectCommand), nameof(PhotoCommand), nameof(RecordCommand), nameof(SaveSnapshotCommand))]
+    [NotifyPropertyChangedFor(nameof(IsDisconnected), nameof(IsLive), nameof(IsConnecting), nameof(IsViewingCamera))]
+    [NotifyCanExecuteChangedFor(nameof(ConnectCommand), nameof(PhotoCommand), nameof(RecordCommand), nameof(SaveSnapshotCommand), nameof(BrowseFilesCommand), nameof(DownloadFileCommand), nameof(DeleteFileCommand))]
     private ConnectionState state = ConnectionState.Disconnected;
 
     /// <summary>One sentence about what is happening, or what went wrong and what to do.</summary>
@@ -130,6 +144,30 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     /// <summary>Whether the picture is live.</summary>
     public bool IsLive => State == ConnectionState.Live;
+
+    /// <summary>Whether the preview rather than the card library is showing.</summary>
+    public bool IsViewingCamera => IsLive && !IsBrowsingFiles;
+
+    /// <summary>Whether the card library is showing in place of preview controls.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsViewingCamera))]
+    [NotifyCanExecuteChangedFor(nameof(DownloadFileCommand), nameof(DeleteFileCommand))]
+    private bool isBrowsingFiles;
+
+    /// <summary>The card file picked for download or deletion.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DownloadFileCommand), nameof(DeleteFileCommand))]
+    private CameraFileViewModel? selectedFile;
+
+    /// <summary>Whether the first delete press has armed the deliberately destructive second one.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DeleteButtonText))]
+    private bool deleteArmed;
+
+    /// <summary>Delete is a two-press action so a stray click cannot erase the card.</summary>
+    public string DeleteButtonText => DeleteArmed ? "Delete permanently — press again" : "Delete selected";
+
+    partial void OnSelectedFileChanged(CameraFileViewModel? value) => DeleteArmed = false;
 
     /// <summary>
     /// Looks for cameras on every adapter, without changing any connection, and offers the choice that
@@ -192,6 +230,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
             await camera.ConnectAsync(option, Password, NetworkChangeConfirmed, timeout.Token);
             State = ConnectionState.Live;
+            IsBrowsingFiles = false;
             Message = "Live.";
 
             // The picture first: it is what somebody connected to see, and on the reference
@@ -214,10 +253,14 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         await StopLiveAsync();
         await camera.DisconnectAsync();
         Settings.Clear();
+        Files.Clear();
+        SelectedFile = null;
+        IsBrowsingFiles = false;
         Frame = null;
         IsRecording = false;
         FrameRate = "";
         CameraSummary = "";
+        lastJpeg = null;
         State = ConnectionState.Disconnected;
         Message = "Disconnected. Your PC is back on its usual network.";
     }
@@ -256,6 +299,107 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>Pauses preview cleanly, then lists the card without holding a half-open RTSP session.</summary>
+    [RelayCommand(CanExecute = nameof(CanUseCamera))]
+    public async Task BrowseFilesAsync()
+    {
+        await StopLiveAsync();
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            var found = await camera.FilesAsync(timeout.Token);
+            Files.Clear();
+            foreach (var file in found)
+            {
+                Files.Add(new CameraFileViewModel(file));
+            }
+
+            SelectedFile = Files.FirstOrDefault();
+            IsBrowsingFiles = true;
+            Message = Files.Count == 0
+                ? "The card is empty, missing, or could not be read by the camera."
+                : $"{Files.Count} file{(Files.Count == 1 ? "" : "s")} on the camera's card.";
+        }
+        catch (Exception exception) when (IsCameraTrouble(exception))
+        {
+            Message = $"Could not read the card: {Explain(exception)}";
+            IsBrowsingFiles = false;
+            StartLive();
+        }
+    }
+
+    /// <summary>Leaves the card library and starts a fresh, properly-owned preview session.</summary>
+    [RelayCommand]
+    public void ReturnToLive()
+    {
+        if (!IsLive || !IsBrowsingFiles)
+        {
+            return;
+        }
+
+        DeleteArmed = false;
+        IsBrowsingFiles = false;
+        Message = "Live.";
+        StartLive();
+    }
+
+    private bool CanUseSelectedFile() => IsLive && IsBrowsingFiles && SelectedFile is not null;
+
+    /// <summary>Copies the selected file into Downloads\Sightline without replacing an existing file.</summary>
+    [RelayCommand(CanExecute = nameof(CanUseSelectedFile))]
+    public async Task DownloadFileAsync()
+    {
+        if (SelectedFile is not { } selected)
+        {
+            return;
+        }
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+            var progress = new CallbackProgress<long>(bytes => onUiThread(() =>
+                Message = $"Downloading {selected.Name}… {bytes / (1024d * 1024d):0.0} MB"));
+            var path = await camera.DownloadAsync(selected.File, downloadFolder(), progress, timeout.Token);
+            Message = $"Saved {Path.GetFileName(path)} to Downloads\\Sightline.";
+        }
+        catch (Exception exception) when (IsCameraTrouble(exception))
+        {
+            Message = $"Download stopped: {Explain(exception)}";
+        }
+    }
+
+    /// <summary>Arms deletion on the first press and permanently deletes on the second.</summary>
+    [RelayCommand(CanExecute = nameof(CanUseSelectedFile))]
+    public async Task DeleteFileAsync()
+    {
+        if (SelectedFile is not { } selected)
+        {
+            return;
+        }
+
+        if (!DeleteArmed)
+        {
+            DeleteArmed = true;
+            Message = $"Press delete again to permanently remove {selected.Name} from the card.";
+            return;
+        }
+
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            await camera.DeleteAsync(selected.File, timeout.Token);
+            Files.Remove(selected);
+            SelectedFile = Files.FirstOrDefault();
+            DeleteArmed = false;
+            Message = $"Deleted {selected.Name} from the camera's card.";
+        }
+        catch (Exception exception) when (IsCameraTrouble(exception))
+        {
+            DeleteArmed = false;
+            Message = $"{selected.Name} was not deleted: {Explain(exception)}";
+        }
+    }
+
     /// <summary>Saves the picture on screen to Pictures\Sightline.</summary>
     [RelayCommand(CanExecute = nameof(CanUseCamera))]
     public async Task SaveSnapshotAsync()
@@ -291,7 +435,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private async Task LoadCameraAsync(CancellationToken cancellationToken)
     {
         var status = await camera.StatusAsync(cancellationToken);
-        IsRecording = status.IsBusy;
+        IsRecording = status.IsRecording;
         var menu = await camera.MenuAsync(cancellationToken);
 
         Settings.Clear();
@@ -307,6 +451,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private void StartLive()
     {
+        if (live is not null)
+        {
+            return;
+        }
+
         live = new CancellationTokenSource();
         var token = live.Token;
         liveTask = Task.Run(() => RunLiveAsync(token), CancellationToken.None);
@@ -439,5 +588,10 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             await camera.DisconnectAsync().ConfigureAwait(false);
         }).GetAwaiter().GetResult();
         Frame?.Dispose();
+    }
+
+    private sealed class CallbackProgress<T>(Action<T> callback) : IProgress<T>
+    {
+        public void Report(T value) => callback(value);
     }
 }

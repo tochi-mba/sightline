@@ -102,18 +102,52 @@
 
       <!-- Right: the picture, and the shutter bar under it. -->
       <Grid Grid.Column="2" RowDefinitions="*,Auto">
-        <Border Classes="panel" Padding="0" ClipToBounds="True" Background="#000000">
+        <Border Classes="panel" Padding="0" ClipToBounds="True" Background="#000000"
+                IsVisible="{Binding IsViewingCamera}">
           <Panel>
             <Image Source="{Binding Frame}" Stretch="Uniform" />
-            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="6"
-                        IsVisible="{Binding !IsLive}">
-              <TextBlock Classes="eyebrow" Text="NO PICTURE" HorizontalAlignment="Center" />
-              <TextBlock Classes="muted" Text="Connect a camera to see what it sees." HorizontalAlignment="Center" />
-            </StackPanel>
           </Panel>
         </Border>
 
-        <Grid Grid.Row="1" ColumnDefinitions="Auto,10,Auto,10,Auto,*" Margin="0,14,0,0">
+        <Border Classes="panel" IsVisible="{Binding IsBrowsingFiles}">
+          <Grid RowDefinitions="Auto,*,Auto">
+            <StackPanel Spacing="3" Margin="0,0,0,12">
+              <TextBlock Classes="eyebrow signal" Text="CARD LIBRARY" />
+              <TextBlock Classes="muted" Text="Pick a file to download. Delete always asks twice." />
+            </StackPanel>
+            <ListBox Grid.Row="1" ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile}"
+                     AutomationProperties.Name="Files on the camera card">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:CameraFileViewModel">
+                  <Grid ColumnDefinitions="140,*,Auto" Margin="4,8">
+                    <TextBlock Text="{Binding Name}" FontWeight="Bold" />
+                    <StackPanel Grid.Column="1" Spacing="2">
+                      <TextBlock Text="{Binding Kind}" />
+                      <TextBlock Classes="muted" Text="{Binding Taken}" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="2" Classes="readout" Text="{Binding Size}" VerticalAlignment="Center" />
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <Grid Grid.Row="2" ColumnDefinitions="Auto,10,Auto,*,Auto" Margin="0,12,0,0">
+              <Button Classes="primary" Content="Download selected" Command="{Binding DownloadFileCommand}" />
+              <Button Grid.Column="2" Content="{Binding DeleteButtonText}" Command="{Binding DeleteFileCommand}" />
+              <Button Grid.Column="4" Content="Back to live view" Command="{Binding ReturnToLiveCommand}" />
+            </Grid>
+          </Grid>
+        </Border>
+
+        <Border Classes="panel" Padding="0" Background="#000000"
+                IsVisible="{Binding IsDisconnected}">
+          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="6">
+            <TextBlock Classes="eyebrow" Text="NO PICTURE" HorizontalAlignment="Center" />
+            <TextBlock Classes="muted" Text="Connect a camera to see what it sees." HorizontalAlignment="Center" />
+          </StackPanel>
+        </Border>
+
+        <Grid Grid.Row="1" ColumnDefinitions="Auto,10,Auto,10,Auto,10,Auto,*" Margin="0,14,0,0"
+              IsVisible="{Binding IsViewingCamera}">
           <Button Classes="primary" Content="Take photo" Command="{Binding PhotoCommand}" />
           <Button Grid.Column="2" Command="{Binding RecordCommand}"
                   Classes.recording="{Binding IsRecording}">
@@ -123,7 +157,8 @@
             </Panel>
           </Button>
           <Button Grid.Column="4" Content="Save snapshot" Command="{Binding SaveSnapshotCommand}" />
-          <TextBlock Grid.Column="5" Classes="readout" Text="{Binding FrameRate}"
+          <Button Grid.Column="6" Content="Card files" Command="{Binding BrowseFilesCommand}" />
+          <TextBlock Grid.Column="7" Classes="readout" Text="{Binding FrameRate}"
                      HorizontalAlignment="Right" VerticalAlignment="Center"
                      Foreground="{StaticResource MutedBrush}" />
         </Grid>

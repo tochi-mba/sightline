@@ -64,6 +64,19 @@ public interface ICameraService : IAsyncDisposable
     /// <summary>Starts or stops recording to the card, returning whether it is now recording.</summary>
     Task<bool> ToggleRecordingAsync(CancellationToken cancellationToken);
 
+    /// <summary>Lists the files on the camera's card.</summary>
+    Task<IReadOnlyList<CameraFile>> FilesAsync(CancellationToken cancellationToken);
+
+    /// <summary>Downloads one card file into <paramref name="folder"/> and returns its final path.</summary>
+    Task<string> DownloadAsync(
+        CameraFile file,
+        string folder,
+        IProgress<long>? progress,
+        CancellationToken cancellationToken);
+
+    /// <summary>Deletes one file from the camera's card.</summary>
+    Task DeleteAsync(CameraFile file, CancellationToken cancellationToken);
+
     /// <summary>Ends the session and leaves the camera's Wi-Fi.</summary>
     Task DisconnectAsync();
 }
