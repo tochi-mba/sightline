@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>Sightline.Platform.Windows</RootNamespace>
+    <Description>Windows itself: its Wi-Fi, its network interfaces, and running its tools.</Description>
+    <!-- LibraryImport generates its marshalling as source, which needs unsafe code to compile. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Sightline.Core/Sightline.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sightline.Platform.Windows.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  How .NET coverage is measured. Only files the compiler or a source generator wrote into obj/ are
+  left out: LibraryImport's marshalling stubs and the like are not code anybody here wrote or can
+  test meaningfully. Every line a person wrote is measured, and no attribute in the code can opt out.
+-->
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat code coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <ExcludeByFile>**/obj/**/*.cs</ExcludeByFile>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>
