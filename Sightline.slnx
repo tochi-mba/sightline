@@ -2,10 +2,14 @@
   <Folder Name="/protocol/">
     <Project Path="protocol/dotnet/Sightline.Protocol/Sightline.Protocol.csproj" />
     <Project Path="protocol/dotnet/Sightline.Protocol.Tests/Sightline.Protocol.Tests.csproj" />
+    <Project Path="protocol/dotnet/Sightline.Testing/Sightline.Testing.csproj" />
   </Folder>
   <Folder Name="/windows/">
     <Project Path="apps/windows/src/Sightline.Core/Sightline.Core.csproj" />
     <Project Path="apps/windows/src/Sightline.Cli/Sightline.Cli.csproj" />
     <Project Path="apps/windows/src/Sightline.App/Sightline.App.csproj" />
+    <Project Path="apps/windows/src/Sightline.Platform.Windows/Sightline.Platform.Windows.csproj" />
+    <Project Path="apps/windows/tests/Sightline.Core.Tests/Sightline.Core.Tests.csproj" />
+    <Project Path="apps/windows/tests/Sightline.Platform.Windows.Tests/Sightline.Platform.Windows.Tests.csproj" />
   </Folder>
 </Solution>

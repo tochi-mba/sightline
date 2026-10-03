@@ -3,6 +3,27 @@ using Sightline.Protocol.Rtp;
 
 namespace Sightline.App.Services;
 
+/// <summary>One camera seen by one Wi-Fi adapter, with the consequence of using it.</summary>
+/// <param name="Ssid">The camera network.</param>
+/// <param name="AdapterId">The stable Windows interface id.</param>
+/// <param name="AdapterName">The name shown by Windows.</param>
+/// <param name="SignalPercent">The signal quality Windows reports.</param>
+/// <param name="Explanation">What connecting through this adapter changes, in plain language.</param>
+/// <param name="RequiresConsent">Whether the adapter must leave another network first.</param>
+/// <param name="StaysOnline">Whether another connection keeps this PC online.</param>
+public sealed record CameraConnectionOption(
+    string Ssid,
+    Guid AdapterId,
+    string AdapterName,
+    int SignalPercent,
+    string Explanation,
+    bool RequiresConsent,
+    bool StaysOnline)
+{
+    /// <summary>A compact label for a picker.</summary>
+    public string DisplayName => $"{Ssid}  ·  {AdapterName}  ·  {SignalPercent}%";
+}
+
 /// <summary>
 /// Everything the window needs from a camera, behind one seam.
 /// </summary>
@@ -12,16 +33,15 @@ namespace Sightline.App.Services;
 /// </remarks>
 public interface ICameraService : IAsyncDisposable
 {
-    /// <summary>Camera networks currently in range.</summary>
-    IReadOnlyList<string> CamerasInRange();
-
-    /// <summary>
-    /// What joining a camera will do to this PC's internet, in a sentence, before it happens.
-    /// </summary>
-    string NetworkAdvice();
+    /// <summary>Scans every adapter without changing any connection, then returns cameras in range.</summary>
+    Task<IReadOnlyList<CameraConnectionOption>> FindCamerasAsync(CancellationToken cancellationToken);
 
     /// <summary>Puts this PC on the camera's Wi-Fi and opens the control channel.</summary>
-    Task ConnectAsync(string ssid, string password, CancellationToken cancellationToken);
+    Task ConnectAsync(
+        CameraConnectionOption option,
+        string password,
+        bool networkChangeConfirmed,
+        CancellationToken cancellationToken);
 
     /// <summary>Whether a session is open.</summary>
     bool IsConnected { get; }

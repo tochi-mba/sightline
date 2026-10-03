@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Fakes of the camera, shared by every test project: the control channel and the RTSP stream, each
+    behaving the way the reference camera was measured to behave. Test support only; never shipped.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Sightline.Testing</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Sightline.Protocol/Sightline.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>

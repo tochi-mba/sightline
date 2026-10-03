@@ -56,16 +56,37 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         this.onUiThread = onUiThread ?? throw new ArgumentNullException(nameof(onUiThread));
     }
 
-    /// <summary>Camera networks in range.</summary>
-    public ObservableCollection<string> Cameras { get; } = [];
+    /// <summary>Each camera in range, once per adapter that can see it.</summary>
+    public ObservableCollection<CameraConnectionOption> Cameras { get; } = [];
 
     /// <summary>The camera's settings, once connected.</summary>
     public ObservableCollection<SettingViewModel> Settings { get; } = [];
 
-    /// <summary>The camera network to join.</summary>
+    /// <summary>The camera, and the adapter to reach it through.</summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
-    private string? selectedCamera;
+    [NotifyPropertyChangedFor(nameof(NeedsNetworkChangeConsent))]
+    private CameraConnectionOption? selectedCamera;
+
+    /// <summary>
+    /// Whether the person has accepted that the chosen adapter leaves the network it is on.
+    /// </summary>
+    /// <remarks>
+    /// Cleared whenever the choice changes: agreeing to take one adapter off one network is not
+    /// agreeing to anything else.
+    /// </remarks>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ConnectCommand))]
+    private bool networkChangeConfirmed;
+
+    /// <summary>Whether the chosen adapter would have to leave a network, so consent is asked for.</summary>
+    public bool NeedsNetworkChangeConsent => SelectedCamera?.RequiresConsent == true;
+
+    partial void OnSelectedCameraChanged(CameraConnectionOption? value)
+    {
+        NetworkChangeConfirmed = false;
+        NetworkAdvice = value?.Explanation ?? "";
+    }
 
     /// <summary>The camera's Wi-Fi password, which is on its screen.</summary>
     [ObservableProperty]
@@ -110,43 +131,66 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Whether the picture is live.</summary>
     public bool IsLive => State == ConnectionState.Live;
 
-    /// <summary>Looks for cameras in range and says what connecting will do to the internet.</summary>
+    /// <summary>
+    /// Looks for cameras on every adapter, without changing any connection, and offers the choice that
+    /// changes least first.
+    /// </summary>
     [RelayCommand]
-    public void RefreshCameras()
+    public async Task RefreshCamerasAsync()
     {
-        Cameras.Clear();
-        foreach (var name in camera.CamerasInRange())
+        var previous = SelectedCamera;
+        IReadOnlyList<CameraConnectionOption> found;
+        try
         {
-            Cameras.Add(name);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            found = await camera.FindCamerasAsync(timeout.Token);
+        }
+        catch (Exception exception) when (IsCameraTrouble(exception))
+        {
+            Message = $"Could not look for cameras: {Explain(exception)}";
+            return;
         }
 
-        SelectedCamera ??= Cameras.FirstOrDefault();
-        NetworkAdvice = camera.NetworkAdvice();
+        Cameras.Clear();
+        foreach (var option in found)
+        {
+            Cameras.Add(option);
+        }
+
+        // Keep the person's choice when it is still there; otherwise the first, which never needs
+        // an adapter to leave a network when any other way exists.
+        SelectedCamera = Cameras.FirstOrDefault(o => o.Ssid == previous?.Ssid && o.AdapterId == previous.AdapterId)
+            ?? Cameras.FirstOrDefault();
         if (State != ConnectionState.Live)
         {
             Message = Cameras.Count == 0
                 ? "No camera in range. Press its Wi-Fi button, then Refresh."
-                : $"Found {Cameras.Count} camera{(Cameras.Count == 1 ? "" : "s")}. Pick one and connect.";
+                : "Pick the camera and the Wi-Fi adapter to reach it through, then connect.";
         }
     }
 
-    private bool CanConnect() => SelectedCamera is not null && State != ConnectionState.Connecting && State != ConnectionState.Live;
+    private bool CanConnect() =>
+        SelectedCamera is not null
+        && (!SelectedCamera.RequiresConsent || NetworkChangeConfirmed)
+        && State != ConnectionState.Connecting && State != ConnectionState.Live;
 
     /// <summary>Joins the camera and starts the picture.</summary>
     [RelayCommand(CanExecute = nameof(CanConnect))]
     public async Task ConnectAsync()
     {
-        if (SelectedCamera is not { } ssid)
+        if (SelectedCamera is not { } option)
         {
             return;
         }
+
+        var ssid = option.Ssid;
 
         State = ConnectionState.Connecting;
         Message = $"Connecting to {ssid}...";
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-            await camera.ConnectAsync(ssid, Password, timeout.Token);
+            await camera.ConnectAsync(option, Password, NetworkChangeConfirmed, timeout.Token);
             State = ConnectionState.Live;
             Message = "Live.";
 
@@ -351,12 +395,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         exception is IOException or TimeoutException or OperationCanceledException
             or System.Net.Sockets.SocketException or InvalidOperationException
             or GpSockProtocolException or GpSockRefusedException
-            or Sightline.Protocol.Rtp.RtspException or Sightline.Core.CameraNotReachableException;
+            or Sightline.Protocol.Rtp.RtspException or Sightline.Core.CameraNotReachableException
+            or Sightline.Core.Connectivity.CameraLinkException or Sightline.Core.Connectivity.WlanException;
 
     /// <summary>An exception as a sentence a person can act on.</summary>
     public static string Explain(Exception exception) => exception switch
     {
         Sightline.Core.CameraNotReachableException e => e.Message,
+        Sightline.Core.Connectivity.CameraLinkException e => e.Message,
+        Sightline.Core.Connectivity.WlanException e => e.Message,
         GpSockRefusedException e => e.Message,
         OperationCanceledException or TimeoutException =>
             "The camera did not answer in time. Its Wi-Fi switches off after about a minute; press its Wi-Fi button and try again.",

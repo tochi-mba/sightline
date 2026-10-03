@@ -1,7 +1,8 @@
 using System.Buffers.Binary;
+using Sightline.Protocol;
 using Sightline.Protocol.GpSock;
 
-namespace Sightline.Protocol.Tests;
+namespace Sightline.Testing;
 
 /// <summary>
 /// A camera that needs no hardware, speaking the real wire format.

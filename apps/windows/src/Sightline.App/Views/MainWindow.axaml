@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:Sightline.App.ViewModels"
         xmlns:gs="using:Sightline.Protocol.GpSock"
+        xmlns:svc="using:Sightline.App.Services"
         x:Class="Sightline.App.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="Sightline"
@@ -34,10 +35,17 @@
             <TextBlock TextWrapping="Wrap" Text="Turn the camera's Wi-Fi on. Its name and password are on its screen." />
 
             <StackPanel Spacing="6">
-              <TextBlock Classes="muted" Text="Camera" />
+              <TextBlock Classes="muted" Text="Camera and Wi-Fi adapter" />
               <Grid ColumnDefinitions="*,8,Auto">
                 <ComboBox ItemsSource="{Binding Cameras}" SelectedItem="{Binding SelectedCamera}"
-                          HorizontalAlignment="Stretch" PlaceholderText="No camera in range" />
+                          HorizontalAlignment="Stretch" PlaceholderText="No camera in range"
+                          AutomationProperties.Name="Camera and Wi-Fi adapter">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="svc:CameraConnectionOption">
+                      <TextBlock Text="{Binding DisplayName}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
                 <Button Grid.Column="2" Content="Refresh" Command="{Binding RefreshCamerasCommand}" />
               </Grid>
             </StackPanel>
@@ -48,7 +56,12 @@
             </StackPanel>
 
             <Border Background="{StaticResource RaisedBrush}" CornerRadius="{StaticResource RadiusMedium}" Padding="12">
-              <TextBlock TextWrapping="Wrap" Classes="muted" Text="{Binding NetworkAdvice}" />
+              <StackPanel Spacing="8">
+                <TextBlock TextWrapping="Wrap" Classes="muted" Text="{Binding NetworkAdvice}" />
+                <CheckBox IsVisible="{Binding NeedsNetworkChangeConsent}" IsChecked="{Binding NetworkChangeConfirmed}">
+                  <TextBlock TextWrapping="Wrap" Text="I understand. Use this adapter anyway." />
+                </CheckBox>
+              </StackPanel>
             </Border>
 
             <Button Classes="primary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"

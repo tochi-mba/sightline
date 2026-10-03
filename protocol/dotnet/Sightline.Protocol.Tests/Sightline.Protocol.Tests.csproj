@@ -16,6 +16,11 @@
 
   <ItemGroup>
     <ProjectReference Include="../Sightline.Protocol/Sightline.Protocol.csproj" />
+    <ProjectReference Include="../Sightline.Testing/Sightline.Testing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Sightline.Testing" />
   </ItemGroup>
 
   <!-- The committed vectors, including the reference camera's own menu, are the test data. -->

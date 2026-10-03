@@ -23,6 +23,11 @@
   <ItemGroup>
     <ProjectReference Include="../../../../protocol/dotnet/Sightline.Protocol/Sightline.Protocol.csproj" />
     <ProjectReference Include="../Sightline.Core/Sightline.Core.csproj" />
+    <ProjectReference Include="../Sightline.Platform.Windows/Sightline.Platform.Windows.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Sightline.App.Tests" />
   </ItemGroup>
 
 </Project>
