@@ -1,4 +1,9 @@
 <Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/dotnet/Sightline.Benchmarks/Sightline.Benchmarks.csproj">
+      <Build Solution="Debug|*" Project="false" />
+    </Project>
+  </Folder>
   <Folder Name="/protocol/">
     <Project Path="protocol/dotnet/Sightline.Protocol/Sightline.Protocol.csproj" />
     <Project Path="protocol/dotnet/Sightline.Protocol.Tests/Sightline.Protocol.Tests.csproj" />
