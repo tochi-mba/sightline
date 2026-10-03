@@ -72,6 +72,10 @@ gradlePlugin {
             id = "sightline.android-application"
             implementationClass = "com.rextechnologies.sightline.buildlogic.AndroidApplicationConventionPlugin"
         }
+        register("androidLibrary") {
+            id = "sightline.android-library"
+            implementationClass = "com.rextechnologies.sightline.buildlogic.AndroidLibraryConventionPlugin"
+        }
         register("compose") {
             id = "sightline.compose"
             implementationClass = "com.rextechnologies.sightline.buildlogic.ComposeConventionPlugin"
