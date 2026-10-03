@@ -22,12 +22,14 @@ public sealed class CameraSession : IAsyncDisposable
 {
     private readonly Func<int, ICameraTransport> transports;
     private readonly string host;
+    private readonly CameraSessionTiming timing;
 
-    private CameraSession(GpSockConnection control, Func<int, ICameraTransport> transports, string host)
+    private CameraSession(GpSockConnection control, Func<int, ICameraTransport> transports, string host, CameraSessionTiming timing)
     {
         Control = control;
         this.transports = transports;
         this.host = host;
+        this.timing = timing;
     }
 
     /// <summary>The control channel.</summary>
@@ -43,31 +45,40 @@ public sealed class CameraSession : IAsyncDisposable
     /// </remarks>
     public Action<string>? Trace { get; set; }
 
-    /// <summary>Opens a session against a real camera, binding to the right local address.</summary>
-    /// <param name="camera">The camera's address; the family default when omitted.</param>
+    /// <summary>
+    /// Opens a session against a real camera, sending from <paramref name="local"/>: the address the
+    /// chosen adapter was given on the camera's network.
+    /// </summary>
+    /// <remarks>
+    /// Binding to the adapter that was actually chosen, rather than to any address on the camera's
+    /// subnet, matters when two adapters have been on the camera: Windows keeps a disconnected
+    /// adapter's old address on record, and traffic sent from it goes nowhere.
+    /// </remarks>
+    /// <param name="camera">The camera's address.</param>
+    /// <param name="local">This PC's address on the camera's network.</param>
     /// <param name="cancellationToken">Gives up connecting.</param>
-    /// <exception cref="CameraNotReachableException">This machine is not on the camera's network.</exception>
-    public static Task<CameraSession> OpenAsync(IPAddress? camera = null, CancellationToken cancellationToken = default)
+    public static Task<CameraSession> OpenAsync(IPAddress camera, IPAddress local, CancellationToken cancellationToken = default)
     {
-        var address = camera ?? CameraAddress.Default;
-        var local = CameraAddress.LocalAddressFor(address)
-            ?? throw new CameraNotReachableException(
-                $"This machine has no address on the camera's network ({address}). Join the camera's Wi-Fi first.");
-
+        ArgumentNullException.ThrowIfNull(camera);
+        ArgumentNullException.ThrowIfNull(local);
         return OpenAsync(
-            port => new TcpCameraTransport(new IPEndPoint(address, port), local),
-            address.ToString(),
+            port => new TcpCameraTransport(new IPEndPoint(camera, port), local),
+            camera.ToString(),
+            timing: null,
             cancellationToken);
     }
 
     /// <summary>Opens a session over transports from <paramref name="transports"/>.</summary>
     /// <param name="transports">Makes a transport to a given port on the camera.</param>
     /// <param name="host">The camera's address, as RTSP URLs must name it.</param>
+    /// <param name="timing">How long the stream may take to start or stay silent; the real values when omitted.</param>
     /// <param name="cancellationToken">Gives up connecting.</param>
     public static async Task<CameraSession> OpenAsync(
-        Func<int, ICameraTransport> transports, string host, CancellationToken cancellationToken = default)
+        Func<int, ICameraTransport> transports, string host, CameraSessionTiming? timing = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(transports);
+        ArgumentException.ThrowIfNullOrWhiteSpace(host);
         var control = new GpSockConnection(transports(GpSockConnection.Port));
         try
         {
@@ -79,7 +90,7 @@ public sealed class CameraSession : IAsyncDisposable
             throw;
         }
 
-        return new CameraSession(control, transports, host);
+        return new CameraSession(control, transports, host, timing ?? CameraSessionTiming.Default);
     }
 
     /// <summary>
@@ -175,15 +186,8 @@ public sealed class CameraSession : IAsyncDisposable
         }
     }
 
-    /// <summary>How long the stream may take to start before it is called stuck.</summary>
-    public static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(10);
-
-    /// <summary>How long the stream may go silent before it is called stopped.</summary>
-    /// <remarks>At about 12 pictures a second, this is many dozens of missing frames.</remarks>
-    public static readonly TimeSpan StallTimeout = TimeSpan.FromSeconds(8);
-
     /// <summary>
-    /// Starts the media flow and negotiates the stream, all within <see cref="StartTimeout"/>.
+    /// Starts the media flow and negotiates the stream, all within <see cref="CameraSessionTiming.Start"/>.
     /// </summary>
     /// <remarks>
     /// Separate from the iterator because C# will not yield inside a try with a catch, and turning a
@@ -193,7 +197,7 @@ public sealed class CameraSession : IAsyncDisposable
     private async Task StartStreamAsync(RtspClient rtsp, CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(StartTimeout);
+        deadline.CancelAfter(timing.Start);
         try
         {
             Trace?.Invoke("control: RestartStreaming ...");
@@ -223,14 +227,14 @@ public sealed class CameraSession : IAsyncDisposable
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             throw new TimeoutException(
-                $"The camera did not start its stream within {StartTimeout.TotalSeconds:0} seconds.");
+                $"The camera did not start its stream within {timing.Start.TotalSeconds:0} seconds.");
         }
     }
 
-    private static async Task<ReadOnlyMemory<byte>> ReadOrStallAsync(RtspClient rtsp, CancellationToken cancellationToken)
+    private async Task<ReadOnlyMemory<byte>> ReadOrStallAsync(RtspClient rtsp, CancellationToken cancellationToken)
     {
         using var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        stall.CancelAfter(StallTimeout);
+        stall.CancelAfter(timing.Stall);
         try
         {
             return await rtsp.ReadStreamAsync(stall.Token).ConfigureAwait(false);
@@ -238,11 +242,11 @@ public sealed class CameraSession : IAsyncDisposable
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             throw new TimeoutException(
-                $"The camera sent nothing for {StallTimeout.TotalSeconds:0} seconds.");
+                $"The camera sent nothing for {timing.Stall.TotalSeconds:0} seconds.");
         }
     }
 
-    private static async Task TryTeardownAsync(RtspClient rtsp)
+    private async Task TryTeardownAsync(RtspClient rtsp)
     {
         if (rtsp.Session is null)
         {
@@ -252,7 +256,7 @@ public sealed class CameraSession : IAsyncDisposable
 
         try
         {
-            using var shortly = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            using var shortly = new CancellationTokenSource(timing.Teardown);
             await rtsp.TeardownAsync(shortly.Token).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or OperationCanceledException or RtspException
@@ -268,6 +272,18 @@ public sealed class CameraSession : IAsyncDisposable
     /// </summary>
     /// <remarks>The camera stops recording and streaming when this happens.</remarks>
     public ValueTask DisposeAsync() => Control.DisposeAsync();
+}
+
+/// <summary>How long each step of the stream is given.</summary>
+/// <param name="Start">To start: RestartStreaming, then RTSP's DESCRIBE, SETUP and PLAY.</param>
+/// <param name="Stall">To go silent before it is called stopped. At about 12 pictures a second this is
+/// many dozens of missing frames.</param>
+/// <param name="Teardown">To end the RTSP session properly on the way out.</param>
+public sealed record CameraSessionTiming(TimeSpan Start, TimeSpan Stall, TimeSpan Teardown)
+{
+    /// <summary>The real timings.</summary>
+    public static CameraSessionTiming Default { get; } =
+        new(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(2));
 }
 
 /// <summary>This machine cannot reach the camera, usually because it is not on its Wi-Fi.</summary>

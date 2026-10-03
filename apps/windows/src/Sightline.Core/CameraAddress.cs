@@ -52,7 +52,16 @@ public static class CameraAddress
         return null;
     }
 
-    /// <summary>Every IPv4 address on an interface that is up.</summary>
+    /// <summary>
+    /// The local address on the camera's network, or an error a person can act on.
+    /// </summary>
+    /// <exception cref="CameraNotReachableException">This machine is not on the camera's network.</exception>
+    public static IPAddress RequireLocalAddressFor(IPAddress camera, IEnumerable<IPAddress>? interfaces = null) =>
+        LocalAddressFor(camera, interfaces)
+        ?? throw new CameraNotReachableException(
+            $"This PC has no address on the camera's network ({camera}). Connect to the camera's Wi-Fi first.");
+
+        /// <summary>Every IPv4 address on an interface that is up.</summary>
     public static IEnumerable<IPAddress> LocalIPv4Addresses()
     {
         foreach (var network in NetworkInterface.GetAllNetworkInterfaces())
