@@ -9,8 +9,10 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
+import java.time.LocalDateTime
 import kotlin.test.Test
 import kotlin.test.assertContains
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -26,6 +28,13 @@ class GpSockConnectionTest {
         val connection = GpSockConnection(camera)
         connection.open()
         return connection to camera
+    }
+
+    /** Puts [count] files on the card, photographs and videos in turn, a minute apart. */
+    private fun FakeCamera.addFiles(count: Int, size: Int = 100) {
+        for (i in 0 until count) {
+            addFile(if (i % 2 == 0) 'J' else 'A', TAKEN.plusMinutes(i.toLong()), ByteArray(size) { i.toByte() })
+        }
     }
 
     @Test
@@ -98,8 +107,17 @@ class GpSockConnectionTest {
     }
 
     @Test
+    fun `turning the camera off is a command it acknowledges`(): Unit = runBlocking {
+        val (connection, camera) = open()
+
+        connection.powerOff()
+
+        assertTrue(camera.isPoweredOff)
+    }
+
+    @Test
     fun `browsing the card before switching mode is refused with a reason`(): Unit = runBlocking {
-        val (connection, _) = open()
+        val (connection, _) = open { addFiles(2) }
 
         val refused = assertFailsWith<GpSockRefusedException> { connection.getFileCount() }
 
@@ -109,12 +127,134 @@ class GpSockConnectionTest {
 
     @Test
     fun `browsing works once the camera is in browse mode`(): Unit = runBlocking {
-        val (connection, _) = open { fileCount = 7 }
+        val (connection, _) = open { addFiles(7) }
 
         connection.setMode(CameraMode.Browse)
         val count = connection.getFileCount()
 
         assertEquals(7, count)
+    }
+
+    @Test
+    fun `an empty card counts as no files rather than an error`(): Unit = runBlocking {
+        // The firmware refuses the count on an empty card with "no storage", exactly as it would
+        // with no card at all; to a person both mean there is nothing to show.
+        val (connection, _) = open()
+        connection.setMode(CameraMode.Browse)
+
+        assertEquals(0, connection.getFileCount())
+        assertTrue(connection.getFileList().isEmpty())
+    }
+
+    @Test
+    fun `the file list is read page by page until every file is in`(): Unit = runBlocking {
+        val (connection, _) = open {
+            addFiles(10)
+            pageSize = 4
+        }
+        connection.setMode(CameraMode.Browse)
+
+        val files = connection.getFileList()
+
+        assertEquals((1..10).toList(), files.map { it.index })
+        assertEquals(CameraFileKind.Photo, files[0].kind)
+        assertEquals(CameraFileKind.Video, files[1].kind)
+        assertEquals(TAKEN.plusMinutes(3), files[3].taken)
+    }
+
+    @Test
+    fun `a camera that repeats its first page does not keep the app paging forever`(): Unit = runBlocking {
+        val (connection, _) = open {
+            addFiles(10)
+            pageSize = 4
+            repeatsFirstPage = true
+        }
+        connection.setMode(CameraMode.Browse)
+
+        val files = connection.getFileList()
+
+        assertEquals(listOf(1, 2, 3, 4), files.map { it.index })
+    }
+
+    @Test
+    fun `listing files outside browse mode is refused`(): Unit = runBlocking {
+        val (connection, _) = open { addFiles(3) }
+
+        val refused = assertFailsWith<GpSockRefusedException> { connection.getFileList() }
+
+        assertEquals(NakCode.ServerBusy, refused.reason)
+    }
+
+    @Test
+    fun `a page with more files than the count stops at the count`(): Unit = runBlocking {
+        // The count and the pages are separate answers, and a file can be written between them.
+        // The count is what was asked about, so the list is held to it.
+        val (connection, camera) = open {
+            addFiles(4)
+            pageSize = 4
+        }
+        connection.setMode(CameraMode.Browse)
+        camera.forcedAnswers[GpSockCommand.PlaybackGetFileCount] = bytes(3, 0)
+
+        val files = connection.getFileList()
+
+        assertEquals(listOf(1, 2, 3), files.map { it.index })
+    }
+
+    @Test
+    fun `a thumbnail comes back as the bytes of a picture`(): Unit = runBlocking {
+        val (connection, _) = open { addFiles(2) }
+        connection.setMode(CameraMode.Browse)
+
+        val thumbnail = connection.getThumbnail(2)
+
+        assertContentEquals(bytes(0xFF, 0xD8, 2, 0xFF, 0xD9), thumbnail)
+    }
+
+    @Test
+    fun `a thumbnail is refused while the camera is still streaming`(): Unit = runBlocking {
+        val (connection, _) = open {
+            addFiles(2)
+            isStreaming = true
+        }
+        connection.setMode(CameraMode.Browse)
+
+        val refused = assertFailsWith<GpSockRefusedException> { connection.getThumbnail(1) }
+
+        assertEquals(NakCode.ServerBusy, refused.reason)
+    }
+
+    @Test
+    fun `a file index outside sixteen bits is refused before it is sent`(): Unit = runBlocking {
+        val (connection, camera) = open { addFiles(1) }
+
+        assertFailsWith<IllegalArgumentException> { connection.getThumbnail(-1) }
+        assertFailsWith<IllegalArgumentException> { connection.deleteFile(65_536) }
+
+        assertEquals(1, camera.files.size)
+    }
+
+    @Test
+    fun `deleting a file removes it from the card`(): Unit = runBlocking {
+        val (connection, camera) = open { addFiles(3) }
+        connection.setMode(CameraMode.Browse)
+
+        connection.deleteFile(2)
+
+        assertEquals(listOf(1, 3), camera.files.map { it.index })
+    }
+
+    @Test
+    fun `a camera built without delete refuses it`(): Unit = runBlocking {
+        val (connection, camera) = open {
+            addFiles(1)
+            supportsDelete = false
+        }
+        connection.setMode(CameraMode.Browse)
+
+        assertFailsWith<GpSockRefusedException> { connection.deleteFile(1) }
+
+        assertEquals(1, camera.files.size)
     }
 
     @Test
@@ -130,7 +270,7 @@ class GpSockConnectionTest {
     fun `a command the camera does not know is reported as such`(): Unit = runBlocking {
         val (connection, _) = open()
 
-        val refused = assertFailsWith<GpSockRefusedException> { connection.demand(GpSockCommand.PowerOff) }
+        val refused = assertFailsWith<GpSockRefusedException> { connection.demand(GpSockCommand.AuthDevice) }
 
         assertEquals(NakCode.InvalidCommand, refused.reason)
     }
@@ -180,7 +320,7 @@ class GpSockConnectionTest {
         // Each must read the answer to its own command, not the other's. A slow link that brings a
         // few bytes at a time is what gives the second request its chance to cut in.
         val (connection, camera) = open {
-            fileCount = 4
+            addFiles(4)
             answersSlowly = true
             dribbleBytes = 3
         }
@@ -244,9 +384,11 @@ class GpSockConnectionTest {
     @Test
     fun `a chunked answer the camera refuses is reported rather than gathered`(): Unit = runBlocking {
         val (connection, _) = open()
+        connection.setMode(CameraMode.Browse)
 
+        // There is no file 9 on an empty card.
         val refused = assertFailsWith<GpSockRefusedException> {
-            connection.askForChunks(GpSockCommand.PlaybackGetThumbnail, byteArrayOf(0, 0))
+            connection.askForChunks(GpSockCommand.PlaybackGetThumbnail, byteArrayOf(9, 0))
         }
 
         assertEquals(GpSockCommand.PlaybackGetThumbnail, refused.command)
@@ -255,14 +397,14 @@ class GpSockConnectionTest {
 
     @Test
     fun `a file count the camera leaves out reads as none`(): Unit = runBlocking {
-        val (connection, _) = open { answers[GpSockCommand.PlaybackGetFileCount] = ByteArray(1) }
+        val (connection, _) = open { forcedAnswers[GpSockCommand.PlaybackGetFileCount] = ByteArray(1) }
 
         assertEquals(0, connection.getFileCount())
     }
 
     @Test
     fun `a file count past 255 is read as the little-endian number it is`(): Unit = runBlocking {
-        val (connection, _) = open { fileCount = 0x0123 }
+        val (connection, _) = open { addFiles(0x0123, size = 1) }
         connection.setMode(CameraMode.Browse)
 
         assertEquals(0x0123, connection.getFileCount())
@@ -305,5 +447,9 @@ class GpSockConnectionTest {
     fun `the control channel listens where the camera does`() {
         assertEquals(8081, GpSockConnection.PORT)
         assertEquals(242, GpSockConnection.MAX_CHUNK_PAYLOAD)
+    }
+
+    private companion object {
+        val TAKEN: LocalDateTime = LocalDateTime.of(2026, 10, 2, 14, 30, 0)
     }
 }

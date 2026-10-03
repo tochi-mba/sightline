@@ -122,10 +122,77 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
         demand(GpSockCommand.RecordToggle)
     }
 
-    /** How many files are on the card. */
+    /** Turns the camera off. The session ends with it. */
+    suspend fun powerOff() {
+        demand(GpSockCommand.PowerOff)
+    }
+
+    /**
+     * How many files are on the card.
+     *
+     * Needs [CameraMode.Browse]. The firmware answers an empty card with [NakCode.NoStorage], the
+     * same refusal as no card at all, so this returns 0 for both and the caller says so in words
+     * that cover either.
+     *
+     * @throws GpSockRefusedException The camera refused for any other reason.
+     */
     suspend fun getFileCount(): Int {
-        val response = demand(GpSockCommand.PlaybackGetFileCount)
+        val response = ask(GpSockCommand.PlaybackGetFileCount)
+        if (response.type == GpSockType.Nak) {
+            if (response.nak == NakCode.NoStorage) {
+                return 0
+            }
+
+            throw GpSockRefusedException(GpSockCommand.PlaybackGetFileCount, response.nakCode)
+        }
+
         return if (response.payload.size >= 2) response.payload.readUInt16LittleEndian(0) else 0
+    }
+
+    /**
+     * Every file on the card, newest page last, as the camera lists them.
+     *
+     * Needs [CameraMode.Browse]. The list comes in pages: the first is asked for with a flag, and
+     * each later one by the index of the last file already seen. Paging stops at the count the
+     * camera gave, at an empty page, or at a page that adds nothing new — a camera that kept
+     * repeating itself must not keep an app here forever.
+     */
+    suspend fun getFileList(): List<CameraFile> {
+        val count = getFileCount()
+        val files = ArrayList<CameraFile>(count)
+        val seen = HashSet<Int>()
+        var first = true
+        var lastIndex = 0
+        while (files.size < count) {
+            val request = byteArrayOf(if (first) 1 else 0, lastIndex.toByte(), (lastIndex shr 8).toByte())
+            val response = demand(GpSockCommand.PlaybackGetFileList, request)
+            var added = 0
+            for (file in CameraFile.parsePage(response.payload)) {
+                // The count and the pages are separate answers, and a file can be written between
+                // them. The count is what was asked about, so the list is held to it.
+                if (files.size < count && seen.add(file.index)) {
+                    files += file
+                    lastIndex = file.index
+                    added++
+                }
+            }
+
+            if (added == 0) {
+                break
+            }
+
+            first = false
+        }
+
+        return files
+    }
+
+    /** A file's thumbnail, as a JPEG. Needs [CameraMode.Browse] with the stream stopped. */
+    suspend fun getThumbnail(index: Int): ByteArray = askForChunks(GpSockCommand.PlaybackGetThumbnail, fileIndex(index))
+
+    /** Deletes a file from the card. Needs [CameraMode.Browse]. */
+    suspend fun deleteFile(index: Int) {
+        demand(GpSockCommand.PlaybackDeleteFile, fileIndex(index))
     }
 
     /**
@@ -171,6 +238,12 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
 
             staleFramesSkipped++
         }
+    }
+
+    /** A file's index as every playback command takes it: 16 bits, little-endian. */
+    private fun fileIndex(index: Int): ByteArray {
+        require(index in 0..0xFFFF) { "The camera numbers its files from 0 to 65535, so there is no file $index." }
+        return byteArrayOf(index.toByte(), (index shr 8).toByte())
     }
 
     private suspend fun readFrame(): GpSockResponse {
@@ -237,7 +310,7 @@ class GpSockRefusedException(
             NakCode.InvalidCommand -> "it does not know that command"
             NakCode.RequestTimeout -> "it gave up waiting"
             NakCode.ModeError -> "that cannot be done in the mode it is in"
-            NakCode.NoStorage -> "there is no memory card in it"
+            NakCode.NoStorage -> "there is no memory card in it, or the card is empty"
             NakCode.WriteFail -> "the card could not be written"
             NakCode.GetFileListFail -> "it could not read the file list"
             NakCode.GetThumbnailFail -> "it could not read the thumbnail"

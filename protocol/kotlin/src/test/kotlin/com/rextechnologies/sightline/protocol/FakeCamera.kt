@@ -1,5 +1,6 @@
 package com.rextechnologies.sightline.protocol
 
+import com.rextechnologies.sightline.protocol.gpsock.CameraFile
 import com.rextechnologies.sightline.protocol.gpsock.CameraMode
 import com.rextechnologies.sightline.protocol.gpsock.GpSockCommand
 import com.rextechnologies.sightline.protocol.gpsock.GpSockConnection
@@ -9,18 +10,21 @@ import com.rextechnologies.sightline.protocol.gpsock.NakCode
 import kotlinx.coroutines.yield
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.time.LocalDateTime
 
 /**
  * A camera that needs no hardware, speaking the real wire format.
  *
- * It answers the way the reference camera did, including the behaviours that are easy to get
- * wrong: long answers arrive in chunks ended by an empty one, browsing is refused unless the
- * camera was put in browse mode first, and the frames can be delivered in awkward pieces so the
- * reader is exercised the way TCP really exercises it.
+ * It answers the way the reference camera and its firmware source do, including the behaviours
+ * that are easy to get wrong: long answers arrive in chunks ended by an empty one; browsing is
+ * refused unless the camera was put in browse mode first, and thumbnails also while it streams; an
+ * empty card is refused as "no storage". Frames can be delivered in awkward pieces so the reader is
+ * exercised the way TCP really exercises it.
  */
 class FakeCamera : CameraTransport {
     private val outbox = ArrayDeque<ByteArray>()
     private val inbox = mutableListOf<Byte>()
+    private val card = mutableListOf<FakeFile>()
 
     /** How many bytes at a time this camera will hand over; 0 means all of them. */
     var dribbleBytes = 0
@@ -50,6 +54,9 @@ class FakeCamera : CameraTransport {
 
     /** Whether the media flow has been started. */
     var isStreaming = false
+
+    /** Whether it has been told to turn off. */
+    var isPoweredOff = false
         private set
 
     /** How many photographs have been taken. */
@@ -69,20 +76,30 @@ class FakeCamera : CameraTransport {
     /** The settings this camera has been told to change, as id and value. */
     val settingsWritten = mutableListOf<Pair<Int, Int>>()
 
-    /** How many files it claims are on the card. */
-    var fileCount = 2
+    /** How many files to put on one page of the file list. */
+    var pageSize = 4
+
+    /** When set, every page of the file list is the first page, as a broken camera might send. */
+    var repeatsFirstPage = false
+
+    /** When false, deleting is refused the way a firmware built without it refuses. */
+    var supportsDelete = true
 
     /** The status payload it reports; 16 bytes, as the reference camera sends. */
     var status: ByteArray = "000280010025b3000000fe7c0000a501".hexToByteArray()
 
     /**
-     * Acknowledgements to give in place of the reference camera's, by command, for the answers a
-     * firmware might give that the reference camera has not been seen to.
+     * Acknowledgements to give in place of the usual answer, by command, for the answers a firmware
+     * might give that the reference camera has not been seen to.
      */
-    val answers = mutableMapOf<GpSockCommand, ByteArray>()
+    val forcedAnswers = mutableMapOf<GpSockCommand, ByteArray>()
 
     /** Frames to send before the answer to the next command, as leftovers from earlier requests. */
     val strayFramesBeforeNextAnswer = mutableListOf<ByteArray>()
+
+    /** The files on the card. */
+    val files: List<FakeFile>
+        get() = card
 
     override var isConnected = false
         private set
@@ -90,6 +107,13 @@ class FakeCamera : CameraTransport {
     /** Whether anything closed the connection, which a real camera reacts badly to. */
     var wasDisposed = false
         private set
+
+    /** Puts a file on the card, numbered after the last one. */
+    fun addFile(code: Char, taken: LocalDateTime, content: ByteArray): FakeFile {
+        val file = FakeFile(code, if (card.isEmpty()) 1 else card.last().index + 1, taken, content)
+        card += file
+        return file
+    }
 
     override suspend fun connect() {
         isConnected = true
@@ -146,9 +170,14 @@ class FakeCamera : CameraTransport {
 
     private fun handle(command: Int, payload: ByteArray) {
         val known = GpSockCommand.fromCode(command)
-        val scripted = known?.let { answers[it] }
-        if (scripted != null) {
-            ack(command, scripted)
+        val forced = known?.let { forcedAnswers[it] }
+        if (forced != null) {
+            ack(command, forced)
+            return
+        }
+
+        if (isBusyFor(known)) {
+            nak(command, NakCode.ServerBusy)
             return
         }
 
@@ -164,6 +193,11 @@ class FakeCamera : CameraTransport {
 
             GpSockCommand.SetMode -> {
                 mode = CameraMode.entries.first { it.code == payload[0].toInt() }
+                ack(command)
+            }
+
+            GpSockCommand.PowerOff -> {
+                isPoweredOff = true
                 ack(command)
             }
 
@@ -183,11 +217,35 @@ class FakeCamera : CameraTransport {
             }
 
             GpSockCommand.PlaybackGetFileCount ->
-                if (mode != CameraMode.Browse) {
+                if (card.isEmpty()) {
+                    // The firmware's answer to an empty card is the same as to no card.
+                    nak(command, NakCode.NoStorage)
+                } else {
+                    ack(command, bytes(card.size and 0xFF, card.size shr 8))
+                }
+
+            GpSockCommand.PlaybackGetFileList -> ack(command, page(payload))
+
+            GpSockCommand.PlaybackGetThumbnail -> {
+                val pictured = find(payload)
+                if (pictured == null) {
+                    nak(command, NakCode.InvalidCommand)
+                } else {
+                    ack(command, bytes(0xFF, 0xD8, pictured.index, 0xFF, 0xD9))
+                    ack(command)
+                }
+            }
+
+            GpSockCommand.PlaybackDeleteFile -> {
+                val doomed = find(payload)
+                if (!supportsDelete || doomed == null) {
+                    // A firmware built without delete answers 0xFFFF, which reads as "busy".
                     nak(command, NakCode.ServerBusy)
                 } else {
-                    ack(command, bytes(fileCount and 0xFF, fileCount shr 8))
+                    card.remove(doomed)
+                    ack(command)
                 }
+            }
 
             GpSockCommand.MenuSetParameter -> {
                 val id = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN).int
@@ -197,6 +255,46 @@ class FakeCamera : CameraTransport {
 
             else -> nak(command, NakCode.InvalidCommand)
         }
+    }
+
+    /** Whether the firmware refuses [command] as busy in the mode the camera is in. */
+    private fun isBusyFor(command: GpSockCommand?): Boolean = when (command) {
+        GpSockCommand.PlaybackGetFileCount,
+        GpSockCommand.PlaybackGetFileList,
+        GpSockCommand.PlaybackDeleteFile,
+        -> mode != CameraMode.Browse
+
+        GpSockCommand.PlaybackGetThumbnail -> mode != CameraMode.Browse || isStreaming
+
+        else -> false
+    }
+
+    /** A page of the file list: the files after the one the request names, or from the start. */
+    private fun page(payload: ByteArray): ByteArray {
+        val after = if (payload[0].toInt() == 1 || repeatsFirstPage) 0 else payload.readUInt16LittleEndian(1)
+        val page = card.filter { it.index > after }.take(pageSize)
+        val bytes = ByteArray(1 + page.size * CameraFile.MINIMUM_ENTRY_LENGTH)
+        bytes[0] = page.size.toByte()
+        page.forEachIndexed { i, file ->
+            val at = 1 + i * CameraFile.MINIMUM_ENTRY_LENGTH
+            val kilobytes = (file.content.size + 1023) / 1024
+            bytes[at] = file.code.code.toByte()
+            bytes.writeUInt16LittleEndian(at + 1, file.index)
+            bytes[at + 3] = (file.taken.year - 2000).toByte()
+            bytes[at + 4] = file.taken.monthValue.toByte()
+            bytes[at + 5] = file.taken.dayOfMonth.toByte()
+            bytes[at + 6] = file.taken.hour.toByte()
+            bytes[at + 7] = file.taken.minute.toByte()
+            bytes[at + 8] = file.taken.second.toByte()
+            bytes.writeInt32LittleEndian(at + 9, kilobytes)
+        }
+
+        return bytes
+    }
+
+    private fun find(payload: ByteArray): FakeFile? {
+        val index = payload.readUInt16LittleEndian(0)
+        return card.firstOrNull { it.index == index }
     }
 
     private fun ack(command: Int, payload: ByteArray = ByteArray(0)) {
@@ -217,3 +315,6 @@ class FakeCamera : CameraTransport {
         ack(command)
     }
 }
+
+/** A file on the fake camera's card. */
+class FakeFile(val code: Char, val index: Int, val taken: LocalDateTime, val content: ByteArray)
