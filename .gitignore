@@ -32,3 +32,6 @@ Thumbs.db
 
 # Claude Code worktrees
 /.claude/worktrees/
+
+# Python's compiled caches, from running the site checker and its tests.
+__pycache__/

@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Sightline connects your phone or PC to a Wi-Fi action camera without cutting your internet: live view, every camera setting, the card's photos and videos, a ride HUD and a security-camera mode. Free, local only, by REX Technologies.">
+<meta name="robots" content="index,follow">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#080A09">
+<meta property="og:title" content="Sightline — see through your action camera, stay online — REX Technologies">
+<meta property="og:description" content="Live view, every setting, the card's files, a ride HUD and a security-camera mode for Wi-Fi action cameras. Android and Windows. No account, no analytics.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://tochi-mba.github.io/sightline/">
+<meta property="og:site_name" content="Sightline">
+<meta name="twitter:card" content="summary">
+<link rel="canonical" href="https://tochi-mba.github.io/sightline/">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+<noscript><style>@media(max-width:760px){.site-nav{display:flex!important;position:static!important;flex-direction:column}.menu-button{display:none!important}}</style></noscript>
+<title>Sightline — see through your action camera, stay online — REX Technologies</title>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="ambient ambient-one" aria-hidden="true"></div>
+<div class="ambient ambient-two" aria-hidden="true"></div>
+
+<header class="site-header">
+  <div class="container nav-wrap">
+    <a class="brand" href="#top" aria-label="Sightline, by REX Technologies">
+      <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><circle cx="16" cy="16" r="7.5"/><path d="M16 3.5v6M16 22.5v6M3.5 16h6M22.5 16h6"/><circle class="brand-dot" cx="16" cy="16" r="1.8"/></svg></span>
+      <span class="brand-lockup"><span class="brand-company">REX Technologies</span><span class="brand-name">Sightline</span></span>
+    </a>
+    <button class="menu-button" id="menu-button" type="button" aria-expanded="false" aria-controls="site-nav"><span class="sr-only">Toggle navigation</span><span></span><span></span></button>
+    <nav id="site-nav" class="site-nav" aria-label="Primary navigation">
+      <a href="#download">Download</a>
+      <a href="#features">Features</a>
+      <a href="#cameras">Cameras</a>
+      <a href="#install">Install</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#faq">FAQ</a>
+      <a class="nav-github" href="https://github.com/tochi-mba/sightline">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero container" id="top">
+    <div class="hero-copy">
+      <p class="eyebrow signal">Wi-Fi action cameras · Android · Windows</p>
+      <h1>See through your camera. <span>Stay online.</span></h1>
+      <p class="hero-lede">
+        Sightline is the app your Wi-Fi action camera should have come with. Connect in one tap and
+        your phone keeps its mobile data, hotspot and tethering. See what the camera sees, change
+        any setting it has, and take the card's photos and videos off it, on Android or Windows.
+      </p>
+      <div class="hero-actions">
+        <a class="button button-primary" href="#download">Download Sightline</a>
+        <a class="button button-secondary" href="#cameras">Will it work with my camera?</a>
+      </div>
+      <div class="hero-meta">
+        <span>Free and open source</span>
+        <span>No account</span>
+        <span>No analytics</span>
+        <span>By REX Technologies</span>
+      </div>
+    </div>
+    <div class="viewfinder" aria-hidden="true">
+      <svg viewBox="0 0 320 200" focusable="false">
+        <path class="vf-grid" d="M107 0v200M213 0v200M0 67h320M0 133h320"/>
+        <path class="vf-corner" d="M22 50V22h28M270 22h28v28M298 150v28h-28M50 178H22v-28"/>
+        <circle class="vf-ring" cx="160" cy="100" r="30"/>
+        <path class="vf-cross" d="M160 56v20M160 124v20M116 100h20M184 100h20"/>
+        <circle class="vf-dot" cx="160" cy="100" r="3"/>
+        <circle class="vf-live" cx="42" cy="42" r="6"/>
+      </svg>
+    </div>
+  </section>
+
+  <section class="section container" id="about">
+    <div class="section-heading">
+      <p class="eyebrow signal">What Sightline is</p>
+      <h2>One app for the camera you already own.</h2>
+      <p>
+        Cheap Wi-Fi action cameras ship with a generic app that tells you to switch off mobile data
+        and does little else well. Sightline replaces it: an Android app, a Windows app and a
+        command line, built on the camera's own protocol, measured on real hardware and
+        <a href="https://github.com/tochi-mba/sightline/blob/main/docs/PROTOCOL.md">written down in the open</a>.
+      </p>
+    </div>
+    <div class="facts">
+      <div><strong>Your internet stays on</strong><span>The camera joins as a local-only link. Mobile data, your hotspot and USB tethering keep working.</span></div>
+      <div><strong>Every setting</strong><span>Sightline reads the camera's own menu, so it offers exactly what your camera supports, no more and no less.</span></div>
+      <div><strong>The whole card</strong><span>Browse photos and videos with thumbnails, download them, and delete them from the camera.</span></div>
+      <div><strong>Yours to shape</strong><span>Layouts, overlays, units, accents and behaviour are all settings, not decisions made for you.</span></div>
+    </div>
+  </section>
+
+  <section class="section container" id="download" aria-labelledby="download-title">
+    <div class="download">
+      <div class="download-top">
+        <p class="download-guess" id="download-guess" aria-live="polite">Choose the download for the device that will run it.</p>
+        <div class="chips" id="download-chips" role="group" aria-label="Show the downloads for" hidden>
+          <button class="chip" id="chip-android" type="button" aria-pressed="false">Android</button>
+          <button class="chip" id="chip-windows" type="button" aria-pressed="false">Windows</button>
+          <button class="chip" id="chip-other" type="button" aria-pressed="false">Something else</button>
+        </div>
+      </div>
+      <div class="download-head">
+        <p class="eyebrow signal">Download</p>
+        <h2 id="download-title">Sightline preview packages for Android and Windows</h2>
+        <p id="download-note">Sightline runs on Android and Windows. Every download is shown here, so you can fetch one for another device.</p>
+      </div>
+      <ul class="download-list" id="download-list">
+        <li class="download-item" id="download-apk">
+          <div class="download-phone" id="download-phone" hidden>
+            <p class="eyebrow signal">Get it on your phone</p>
+            <p>Open <strong>tochi-mba.github.io/sightline</strong> on the phone and download it there, or download it here and copy it across.</p>
+            <!-- The QR code's slot. Once site/apk-qr.svg has been generated and committed, put this
+                 line here, uncommented; until then the page references no file that does not exist.
+                 <img class="download-qr" src="apk-qr.svg" alt="A QR code that opens the Android download" width="148" height="148">
+            -->
+          </div>
+          <a class="download-link" href="https://github.com/tochi-mba/sightline/releases/latest"><span class="download-label">Android app</span><span class="download-file" id="file-apk">View latest release</span></a>
+          <div class="download-text">
+            <p>For phones and tablets on Android 10 or newer.</p>
+            <p class="download-meta" id="meta-apk" hidden></p>
+          </div>
+        </li>
+        <li class="download-item" id="download-setup">
+          <a class="download-link" href="https://github.com/tochi-mba/sightline/releases/latest"><span class="download-label">Windows installer</span><span class="download-file" id="file-setup">View latest release</span></a>
+          <div class="download-text">
+            <p>Installs for you alone, with no administrator, and updates itself.</p>
+            <p class="download-meta" id="meta-setup" hidden></p>
+          </div>
+        </li>
+        <li class="download-item" id="download-portable">
+          <a class="download-link" href="https://github.com/tochi-mba/sightline/releases/latest"><span class="download-label">Windows portable app</span><span class="download-file" id="file-portable">View latest release</span></a>
+          <div class="download-text">
+            <p>One file that runs from anywhere, a USB stick included, and updates itself.</p>
+            <p class="download-meta" id="meta-portable" hidden></p>
+          </div>
+        </li>
+        <li class="download-item" id="download-cli">
+          <a class="download-link" href="https://github.com/tochi-mba/sightline/releases/latest"><span class="download-label">Windows command line</span><span class="download-file" id="file-cli">View latest release</span></a>
+          <div class="download-text">
+            <p>The <code>sightline</code> command on its own, for terminals and scripts.</p>
+            <p class="download-meta" id="meta-cli" hidden></p>
+          </div>
+        </li>
+      </ul>
+      <div class="download-foot">
+        <p>
+          Direct downloads appear only after GitHub's API reports an exact matching asset on the
+          latest release. If that lookup is unavailable, every control safely falls back to
+          <a href="https://github.com/tochi-mba/sightline/releases/latest">the latest release page</a>.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section container" id="features">
+    <div class="section-heading">
+      <p class="eyebrow signal">What it does</p>
+      <h2>Everything the camera can do, and more it never could.</h2>
+    </div>
+    <div class="feature-grid">
+      <div class="feature-card">
+        <h3>Connect without losing the internet</h3>
+        <p>Pick the camera once. On a PC, Sightline uses a spare Wi-Fi adapter and tells you exactly what any choice would cost before it touches a network. It never takes an adapter off your network without asking.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Live view</h3>
+        <p>See the camera's picture as it happens, with grids, crop guides and stream statistics when you want them. Save a snapshot straight from the stream.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Shutter and recording</h3>
+        <p>Take photos and start or stop recording on the camera's card, with the clip timer and the card's remaining time always in view.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Every camera setting</h3>
+        <p>Resolution, exposure, loop recording, white balance, date stamp and the rest, read from the camera itself. Risky ones, like formatting the card, ask first.</p>
+      </div>
+      <div class="feature-card">
+        <h3>The card's photos and videos</h3>
+        <p>Thumbnails, downloads that can be paused and resumed, and deletes that only happen once you are sure. Downloads are checked before they are called done.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Ride HUD</h3>
+        <p>On Android, a full-screen heads-up display with speed, lean angle and the camera's status in large, steady numerals, with layouts for different rides.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Sentry</h3>
+        <p>Turn the camera into a security camera. Sightline watches for movement in the zones you draw and keeps clips from before and after, even with the screen off.</p>
+      </div>
+      <div class="feature-card">
+        <h3>Updates that look after themselves</h3>
+        <p>Both apps check for new versions and install them when nothing is recording. What changed is shown once, only when something did.</p>
+      </div>
+      <div class="feature-card">
+        <h3>A command line</h3>
+        <p><code>sightline</code> drives the camera from a terminal: connect, status, settings, photos, recording, snapshots and the card's files, with exit codes scripts can rely on.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section container" id="cameras">
+    <div class="section-heading">
+      <p class="eyebrow signal">Cameras</p>
+      <h2>Will it work with my camera?</h2>
+      <p>
+        Sightline is built for Generalplus-based Wi-Fi action cameras: the ones whose Wi-Fi name
+        starts <code>ActionCam_</code> and that live at <code>192.168.100.1</code> once you join
+        them. A model is listed as supported only once it has been tested and the result dated.
+      </p>
+    </div>
+    <div class="steps steps-two">
+      <div class="step step-verified">
+        <span class="step-number">Tested</span>
+        <h3>The reference camera</h3>
+        <p>Generalplus firmware <code>20240708 V1.3</code>, 4K video and 16 MP photos, tested on 2 October 2026.</p>
+      </div>
+      <div class="step">
+        <span class="step-number">The rule</span>
+        <h3>Evidence before support</h3>
+        <p>A matching Wi-Fi name is a good sign, not proof. Every camera that has been tried, and what worked on it, is in the public acceptance record.</p>
+      </div>
+    </div>
+    <div class="camera-report">
+      <p>Tried Sightline with another camera, whether it worked or not? A camera report is how a model gets onto the list.</p>
+      <div class="hero-actions">
+        <a class="button button-primary" href="https://github.com/tochi-mba/sightline/issues/new?title=Camera%20report%3A%20&amp;body=Camera%2C%20as%20named%20on%20it%20or%20its%20box%3A%0A%0AHow%20its%20Wi-Fi%20name%20starts%20%28for%20example%20ActionCam_%3B%20leave%20off%20the%20rest%2C%20which%20can%20identify%20your%20camera%29%3A%0A%0AIs%20it%20at%20192.168.100.1%20once%20you%20have%20joined%20its%20Wi-Fi%3F%0A%0AFirmware%2C%20if%20you%20can%20see%20it%3A%0A%0AWhat%20worked%3A%0A%0AWhat%20did%20not%3A%0A">Send a camera report</a>
+        <a class="button button-secondary" href="https://github.com/tochi-mba/sightline/blob/main/docs/ACCEPTANCE.md">What has been tested, with dates</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section container" id="install">
+    <div class="section-heading">
+      <p class="eyebrow signal">Install</p>
+      <h2>Two minutes, either way.</h2>
+      <p>Sightline runs on Android 10 or newer, and on Windows 10 and 11, 64-bit.</p>
+    </div>
+    <div class="tabs" id="install-tabs" role="tablist" aria-label="Install on" hidden>
+      <button class="tab" id="tab-android" type="button" role="tab" aria-selected="true" aria-controls="install-android">Android</button>
+      <button class="tab" id="tab-windows" type="button" role="tab" aria-selected="false" aria-controls="install-windows" tabindex="-1">Windows</button>
+    </div>
+    <div class="tab-panel" id="install-android" role="tabpanel" aria-labelledby="tab-android">
+      <h3 class="panel-title">On Android</h3>
+      <ol class="install-steps">
+        <li><strong>Download <code>Sightline.apk</code> on the phone.</strong> Open this page on the phone and use the download above.</li>
+        <li><strong>Allow the install.</strong> Sightline is not in the Play Store, so Android asks whether your browser may install apps. Allow it for this one install.</li>
+        <li><strong>Open Sightline and wake the camera's Wi-Fi.</strong> The app walks you through connecting. Your mobile data stays on throughout.</li>
+      </ol>
+    </div>
+    <div class="tab-panel" id="install-windows" role="tabpanel" aria-labelledby="tab-windows">
+      <h3 class="panel-title">On Windows</h3>
+      <ol class="install-steps">
+        <li><strong>Run <code>Sightline-Setup.exe</code>.</strong> It installs for you alone, needs no administrator, and puts <code>sightline</code> on your path. Prefer nothing installed? <code>Sightline-Portable.exe</code> runs from anywhere.</li>
+        <li><strong>If Windows says "Windows protected your PC", choose More info, then Run anyway.</strong> Sightline is not code-signed yet, and that is the warning Windows shows for every unsigned app.</li>
+        <li><strong>Plug in a spare Wi-Fi adapter if you have one.</strong> It lets the PC stay online through its own Wi-Fi while the adapter talks to the camera. Sightline works with one adapter too and says first what that will mean.</li>
+      </ol>
+    </div>
+  </section>
+
+  <section class="section container" id="privacy">
+    <div class="section-heading">
+      <p class="eyebrow signal">Privacy</p>
+      <h2>Nothing leaves your device.</h2>
+    </div>
+    <div class="facts">
+      <div><strong>No account</strong><span>There is nothing to sign up for and nothing to sign in to.</span></div>
+      <div><strong>No analytics</strong><span>No tracking, no telemetry, no crash reporting service, no ads.</span></div>
+      <div><strong>Local only</strong><span>Your photos, videos and Sentry clips stay on your camera, phone or PC.</span></div>
+      <div><strong>One request out</strong><span>The only internet request is the update check to GitHub, and you can switch it off.</span></div>
+    </div>
+  </section>
+
+  <section class="section container" id="faq">
+    <div class="section-heading">
+      <p class="eyebrow signal">FAQ</p>
+      <h2>Questions, answered plainly.</h2>
+    </div>
+    <div class="faq">
+      <details open>
+        <summary>Will my phone lose its internet while it is on the camera?</summary>
+        <p>No. Sightline joins the camera as a local-only connection, so Android keeps using mobile data for everything else. If your phone's only internet is Wi-Fi and it cannot hold two connections at once, Sightline tells you before connecting, not after.</p>
+      </details>
+      <details>
+        <summary>And my PC?</summary>
+        <p>With a spare Wi-Fi adapter, nothing changes: the camera gets the spare and your internet keeps its own. With one adapter, Sightline says exactly what will pause and puts your Wi-Fi back on its network when you disconnect.</p>
+      </details>
+      <details>
+        <summary>Why does Windows warn me before running it?</summary>
+        <p>Because the builds are not code-signed yet. A certificate costs money, and the warning is what Windows shows for every unsigned app. The source is public, and every release lists its files' checksums.</p>
+      </details>
+      <details>
+        <summary>Will another camera work?</summary>
+        <p>If its Wi-Fi name starts <code>ActionCam_</code> and it answers at <code>192.168.100.1</code>, very likely. Only tested models are listed as supported; a camera report adds yours.</p>
+      </details>
+      <details>
+        <summary>Why do the downloads sometimes open the release page?</summary>
+        <p>A button becomes a direct download only once GitHub confirms that exact file is on the latest release. If GitHub cannot be reached, the button opens the release page rather than guessing.</p>
+      </details>
+      <details>
+        <summary>Does it cost anything?</summary>
+        <p>No. Sightline is free and MIT licensed, and the source is on GitHub.</p>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="container footer-wrap">
+    <span>© 2026 REX Technologies · Sightline</span>
+    <span>MIT licence. Not affiliated with any camera maker.</span>
+    <span class="footer-links">
+      <a href="https://github.com/tochi-mba/sightline">Source</a>
+      <a href="https://github.com/tochi-mba/sightline/blob/main/LICENSE">Licence</a>
+      <a href="https://github.com/tochi-mba/sightline/blob/main/docs/ACCEPTANCE.md">Acceptance record</a>
+      <a href="#top">Back to top <span aria-hidden="true">↑</span></a>
+    </span>
+  </div>
+</footer>
+<script type="module" src="app.js"></script>
+</body>
+</html>

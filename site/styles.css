@@ -1,0 +1,225 @@
+/* Sightline — REX Technologies. The ink/signal palette shared across REX products; dark by design. */
+
+:root{
+  --ink:#080A09;
+  --panel:#111512;
+  --raised:#181E19;
+  --line:#29302A;
+  --text:#F2F5EE;
+  --muted:#858D83;
+  --signal:#D7FF3F;
+  --live:#FF774D;
+  --signal-wash:rgba(215,255,63,.10);
+  --radius-s:8px;
+  --radius-m:12px;
+  --radius-l:18px;
+  --gutter:clamp(16px,4vw,32px);
+  --page:1120px;
+  --section:clamp(56px,8vw,96px);
+  --font:"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;
+  --mono:"Cascadia Mono","SF Mono",Consolas,ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{background:var(--ink);scroll-behavior:smooth;-webkit-text-size-adjust:100%;overflow-x:hidden}
+body{margin:0;background:var(--ink);color:var(--text);font-family:var(--font);font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+a{color:var(--signal);text-decoration:none}
+a:hover{text-decoration:underline}
+button{font:inherit}
+svg{display:block}
+code,kbd,pre{font-family:var(--mono)}
+:focus-visible{outline:2px solid var(--signal);outline-offset:3px;border-radius:4px}
+/* The page script shows and hides by this attribute, so it has to win over any display a class sets. */
+[hidden]{display:none!important}
+/* A section reached by its anchor stops clear of the sticky header. */
+section[id],.tab-panel{scroll-margin-top:84px}
+
+.container{width:min(var(--page),100% - 2 * var(--gutter));margin-inline:auto}
+.section{padding:var(--section) 0;border-top:1px solid var(--line)}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.skip-link{position:absolute;left:12px;top:-60px;background:var(--signal);color:var(--ink);padding:10px 14px;border-radius:var(--radius-s);font-weight:700;z-index:100}
+.skip-link:focus{top:12px}
+
+h1,h2,h3{margin:0;line-height:1.15;font-weight:700;letter-spacing:-.01em}
+h1,h2{text-wrap:balance}
+h1{font-size:clamp(40px,6.4vw,78px);letter-spacing:-.035em;font-weight:900}
+h1 span{color:var(--signal)}
+h2{font-size:clamp(28px,4.2vw,46px)}
+h3{font-size:19px}
+p{margin:0}
+strong{font-weight:700;color:var(--text)}
+code{color:var(--text);background:var(--raised);padding:1px 6px;border-radius:5px;font-size:14px;overflow-wrap:anywhere}
+pre code{padding:0;background:none;overflow-wrap:normal}
+kbd{font-family:var(--font);font-weight:700;font-size:.92em;color:var(--text);background:var(--raised);border:1px solid var(--line);border-radius:6px;padding:1px 7px;white-space:nowrap}
+
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:9px}
+.eyebrow.signal{color:var(--signal)}
+.pill{display:inline-flex;align-items:center;min-height:24px;padding:0 10px;border-radius:999px;border:1px solid var(--live);color:var(--live);font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;white-space:nowrap}
+
+.ambient{position:fixed;border-radius:50%;filter:blur(90px);pointer-events:none;opacity:.14;z-index:-2}
+.ambient-one{width:520px;height:520px;background:var(--signal);top:90px;right:-230px}
+.ambient-two{width:420px;height:420px;background:var(--live);top:620px;left:-250px}
+
+/* Header */
+.site-header{position:sticky;top:0;z-index:50;background:rgba(8,10,9,.86);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.nav-wrap{min-height:64px;display:flex;align-items:center;gap:12px}
+.brand{display:flex;align-items:center;gap:12px;color:var(--text);min-height:44px}
+.brand:hover{text-decoration:none}
+.brand-mark{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:var(--raised);border:1px solid var(--line)}
+.brand-mark svg{width:23px;fill:none;stroke:var(--signal);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.brand-mark .brand-dot{fill:var(--signal);stroke:none}
+.brand-lockup{display:flex;flex-direction:column;gap:1px;line-height:1.08}
+.brand-company{font-size:10px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--signal)}
+.brand-name{font-size:16px;font-weight:700;color:var(--text)}
+.site-nav{margin-left:auto;display:flex;align-items:center;gap:4px}
+.site-nav a{color:var(--muted);font-size:14px;font-weight:600;white-space:nowrap;padding:10px 12px;border-radius:var(--radius-s);min-height:44px;display:inline-flex;align-items:center}
+.site-nav a:hover{color:var(--text);text-decoration:none;background:var(--raised)}
+.nav-github{color:var(--ink)!important;background:var(--signal)!important;margin-left:6px;padding-inline:16px!important}
+.nav-github:hover{opacity:.9}
+.menu-button{margin-left:auto;display:none;min-width:44px;min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:var(--radius-s);background:transparent;color:var(--text);cursor:pointer}
+.menu-button span:not(.sr-only){display:block;width:16px;height:2px;background:currentColor;margin:5px auto}
+
+/* Hero */
+.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:clamp(28px,5vw,64px);align-items:center;padding:clamp(48px,7vw,96px) 0 clamp(40px,6vw,72px)}
+.hero-copy{display:flex;flex-direction:column;gap:22px}
+.hero-lede{font-size:clamp(17px,1.6vw,20px);color:var(--muted);max-width:56ch}
+.hero-actions{display:flex;flex-wrap:wrap;gap:12px}
+.hero-meta{display:flex;flex-wrap:wrap;gap:8px 18px;color:var(--muted);font-size:13px;font-weight:600}
+.hero-meta span::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--signal);margin-right:8px;vertical-align:middle}
+.hero-status{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;color:var(--muted);font-size:14px;max-width:60ch}
+.hero-status a{text-decoration:underline;text-underline-offset:3px}
+.button{display:inline-flex;align-items:center;gap:8px;min-height:48px;padding:0 20px;border-radius:var(--radius-m);font-weight:700;border:1px solid transparent}
+.button:hover{text-decoration:none}
+.button-primary{background:var(--signal);color:var(--ink)}
+.button-primary:hover{filter:brightness(1.05)}
+.button-secondary{background:var(--raised);color:var(--text);border-color:var(--line)}
+.button-secondary:hover{border-color:var(--muted)}
+
+/* A viewfinder drawn in lines: what the app is about, without pretending to be a screenshot of it. */
+.viewfinder{border-radius:var(--radius-l);background:radial-gradient(120% 90% at 28% 18%,rgba(215,255,63,.08),transparent 62%),var(--panel);border:1px solid var(--line);box-shadow:0 30px 80px rgba(0,0,0,.5);overflow:hidden}
+.viewfinder svg{width:100%;height:auto}
+.vf-grid{fill:none;stroke:var(--line);stroke-width:1}
+.vf-corner{fill:none;stroke:var(--signal);stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+.vf-ring,.vf-cross{fill:none;stroke:var(--signal);stroke-width:2;stroke-linecap:round}
+.vf-dot{fill:var(--signal)}
+.vf-live{fill:var(--live);animation:live 2.4s ease-in-out infinite}
+@keyframes live{50%{opacity:.3}}
+
+/* A window showing commands */
+.console{margin:0;padding:22px;border-radius:var(--radius-l);background:var(--panel);border:1px solid var(--line);overflow:auto;font-size:13.5px;line-height:1.7;color:var(--text);box-shadow:0 30px 80px rgba(0,0,0,.5)}
+
+/* Sections */
+.section-heading{display:flex;flex-direction:column;gap:12px;max-width:72ch;margin-bottom:clamp(28px,4vw,44px)}
+.section-heading p{color:var(--muted);font-size:17px}
+.section-heading p.eyebrow{font-size:11px}
+.section-heading a,.download-foot a,.camera-report p a,.faq a{text-decoration:underline;text-underline-offset:3px}
+.facts{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+.facts div{display:flex;flex-direction:column;gap:4px;padding:18px 20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-m)}
+.facts strong{font-size:15px}
+.facts span{font-size:14px;color:var(--muted)}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.steps-two{grid-template-columns:repeat(2,1fr)}
+.step{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-l);padding:24px;display:flex;flex-direction:column;gap:12px}
+.step p{color:var(--muted)}
+.step-number{font-family:var(--mono);color:var(--signal);font-weight:700;font-size:13px}
+.step-verified{border-color:rgba(215,255,63,.45)}
+.camera-report{margin-top:28px;display:grid;gap:16px;max-width:80ch}
+.camera-report p{color:var(--muted)}
+.feature-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.feature-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-l);padding:24px;display:flex;flex-direction:column;gap:10px}
+.feature-card p{color:var(--muted)}
+
+/* Download panel. Its own markup is the view for a device Sightline does not run on, so it reads
+   correctly before the page script runs, and if it never does. */
+.download{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-l);overflow:hidden}
+.download-top{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding:12px clamp(16px,3vw,28px);border-bottom:1px solid var(--line)}
+.download-guess{font-size:14px;color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
+.chip{min-height:44px;padding:0 16px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--muted);font-size:14px;font-weight:600;cursor:pointer}
+.chip:hover{color:var(--text);border-color:var(--muted)}
+.chip[aria-pressed="true"]{color:var(--ink);background:var(--signal);border-color:var(--signal)}
+.download-head{display:flex;flex-direction:column;gap:10px;padding:clamp(22px,3.5vw,32px) clamp(16px,3vw,28px) 6px}
+.download-head h2{font-size:clamp(26px,3.4vw,38px)}
+.download-head p:not(.eyebrow){color:var(--muted);max-width:64ch}
+.download-list{list-style:none;margin:0;padding:6px clamp(16px,3vw,28px) clamp(14px,2.5vw,22px)}
+.download-item{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);align-items:center;gap:12px 24px;padding:16px 0}
+.download-item+.download-item{border-top:1px solid var(--line)}
+.download-link{display:flex;flex-direction:column;justify-content:center;gap:2px;min-height:60px;padding:10px 18px;border-radius:var(--radius-m);background:var(--raised);border:1px solid var(--line);color:var(--text)}
+.download-link:hover{text-decoration:none;border-color:var(--muted)}
+.download-label{font-weight:700}
+.download-file{font-family:var(--mono);font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.download-text{display:grid;gap:4px;color:var(--muted);font-size:15px}
+.download-meta{color:var(--text);font-size:14px;overflow-wrap:anywhere}
+.download-item.is-lead .download-link{min-height:68px;background:var(--signal);border-color:var(--signal);color:var(--ink)}
+.download-item.is-lead .download-link:hover{filter:brightness(1.05)}
+.download-item.is-lead .download-file{color:var(--ink);opacity:.75}
+.download-phone{grid-column:1/-1;display:grid;gap:6px;color:var(--muted);font-size:15px}
+.download-phone strong{overflow-wrap:anywhere}
+/* For the QR code's slot in index.html: a code needs a light quiet zone around it to scan. */
+.download-qr{width:148px;height:148px;padding:8px;border-radius:var(--radius-s);background:#FFFFFF}
+.download-foot{padding:14px clamp(16px,3vw,28px);border-top:1px solid var(--line);font-size:14px;color:var(--muted)}
+
+/* Install */
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px}
+.tab{min-height:44px;padding:0 20px;border-radius:var(--radius-s);border:1px solid var(--line);background:transparent;color:var(--muted);font-size:15px;font-weight:600;cursor:pointer}
+.tab:hover{color:var(--text);border-color:var(--muted)}
+.tab[aria-selected="true"]{color:var(--ink);background:var(--signal);border-color:var(--signal)}
+.tab-panel{max-width:880px;display:grid;gap:18px;padding:clamp(20px,3vw,28px);background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-l)}
+.tab-panel+.tab-panel{margin-top:14px}
+.panel-title{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--signal)}
+.install-steps{margin:0;padding-left:0;list-style:none;counter-reset:step;display:grid;gap:14px}
+.install-steps li{counter-increment:step;position:relative;padding-left:48px;color:var(--muted);min-width:0}
+.install-steps li::before{content:counter(step,decimal-leading-zero);position:absolute;left:0;top:2px;font-family:var(--mono);font-weight:700;color:var(--signal)}
+.install-steps em{font-style:normal;font-weight:600;color:var(--text)}
+.install-steps .console{margin-top:12px;padding:16px 18px;font-size:13px;box-shadow:none}
+
+/* Privacy */
+.privacy-list{list-style:none;margin:0;padding:0;display:grid;gap:14px;max-width:80ch}
+.privacy-list li{position:relative;padding-left:24px;color:var(--muted)}
+.privacy-list li::before{content:"";position:absolute;left:2px;top:.62em;width:8px;height:8px;border-radius:50%;background:var(--signal)}
+
+/* FAQ */
+.faq{display:grid;gap:10px;max-width:80ch}
+.faq details{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius-m);padding:0 20px}
+.faq summary{cursor:pointer;padding:16px 0;font-weight:700;list-style:none;display:flex;justify-content:space-between;gap:16px;align-items:center}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";color:var(--signal);font-weight:700;font-size:20px;line-height:1}
+.faq details[open] summary::after{content:"−"}
+.faq p{padding:0 0 18px;color:var(--muted)}
+
+/* Footer */
+.site-footer{border-top:1px solid var(--line);padding:28px 0;color:var(--muted);font-size:14px}
+.footer-wrap{display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px}
+.site-footer a{text-decoration:underline;text-underline-offset:3px}
+.footer-links{display:flex;flex-wrap:wrap;gap:18px}
+
+/* 404 */
+.not-found{padding:clamp(72px,14vh,140px) 0;max-width:720px}
+.not-found h1{margin:14px 0 0;font-size:clamp(34px,5.6vw,60px)}
+.not-found .hero-lede{margin-top:16px}
+.not-found .hero-actions{margin-top:28px}
+
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}}
+
+/* Responsive */
+@media(max-width:1000px){
+  .hero{grid-template-columns:1fr}
+  .viewfinder{max-width:560px}
+  .steps,.feature-grid,.facts{grid-template-columns:repeat(2,1fr)}
+}
+@media(forced-colors:active){
+  .ambient{display:none}
+  .button-primary,.nav-github,.chip[aria-pressed="true"],.tab[aria-selected="true"],.download-item.is-lead .download-link{border:2px solid ButtonText}
+}
+@media(max-width:760px){
+  .menu-button{display:block}
+  .site-nav{display:none;position:absolute;left:0;right:0;top:100%;flex-direction:column;align-items:stretch;padding:10px var(--gutter) 16px;background:var(--ink);border-bottom:1px solid var(--line)}
+  .site-nav.open{display:flex}
+  .site-nav a{min-height:46px}
+  .nav-github{margin-left:0;justify-content:center}
+  .brand-name{font-size:14px}
+  .steps,.feature-grid,.facts{grid-template-columns:1fr}
+  .chips{margin-left:0}
+  .download-item{grid-template-columns:minmax(0,1fr)}
+}
