@@ -4,9 +4,13 @@ import com.rextechnologies.sightline.protocol.ByteQueue
 import com.rextechnologies.sightline.protocol.CameraTransport
 import com.rextechnologies.sightline.protocol.readUInt16LittleEndian
 import com.rextechnologies.sightline.protocol.writeInt32LittleEndian
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.Closeable
+import java.io.OutputStream
 
 /**
  * The camera's control channel: one connection, held open for the whole session.
@@ -43,6 +47,9 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
     var staleFramesSkipped: Int = 0
         private set
 
+    /** Why the channel can no longer be trusted, once a cancelled transfer would not wind down. */
+    private var outOfStep: String? = null
+
     /** Opens the control channel. */
     suspend fun open() {
         transport.connect()
@@ -57,6 +64,7 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
      */
     suspend fun ask(command: GpSockCommand, payload: ByteArray = ByteArray(0)): GpSockResponse =
         oneAtATime.withLock {
+            throwIfOutOfStep()
             transport.send(GpSockFrame.encode(command, payload))
             readAnswer(command)
         }
@@ -64,8 +72,8 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
     /**
      * Sends a command and gathers the chunked answer the camera streams back.
      *
-     * The menu, a thumbnail and a file's bytes all arrive as a run of acknowledgements of at most
-     * [MAX_CHUNK_PAYLOAD] bytes, ended by an empty one.
+     * The menu and a thumbnail arrive as a run of acknowledgements ended by an empty one. For a
+     * file's bytes use [download], which does not hold the whole file in memory.
      *
      * @param command What to ask for.
      * @param payload Its argument.
@@ -76,9 +84,13 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
         command: GpSockCommand,
         payload: ByteArray = ByteArray(0),
         onProgress: ((Int) -> Unit)? = null,
-    ): ByteArray = oneAtATime.withLock {
-        transport.send(GpSockFrame.encode(command, payload))
-        gatherChunks(command, onProgress)
+    ): ByteArray {
+        val gathered = ByteQueue()
+        streamChunks(command, payload) { chunk ->
+            gathered.append(chunk)
+            onProgress?.invoke(gathered.size)
+        }
+        return gathered.toByteArray()
     }
 
     /**
@@ -196,36 +208,175 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
     }
 
     /**
-     * Writes one setting.
+     * Copies a file off the card into [destination], a frame at a time.
      *
-     * @param id The menu id, from the camera's own catalogue.
-     * @param value The value to write.
+     * Needs [CameraMode.Browse]. A 4K video is gigabytes, so nothing is gathered in memory.
+     * Cancelling is safe: the camera stops sending as soon as it sees another request, so a cancelled
+     * download sends one, lets the camera finish what was already in flight, and leaves the channel
+     * ready for the next command.
+     *
+     * @param index The file's index, from [getFileList].
+     * @param destination Where the bytes go.
+     * @param onProgress Called with the running total of bytes.
+     * @return How many bytes were written.
      */
-    suspend fun setSetting(id: Int, value: Int) {
-        // Layout from the firmware: a 32-bit little-endian id, a size byte, then the value.
-        val payload = ByteArray(6)
-        payload.writeInt32LittleEndian(0, id)
-        payload[4] = 1
-        payload[5] = value.toByte()
-        demand(GpSockCommand.MenuSetParameter, payload)
+    suspend fun download(index: Int, destination: OutputStream, onProgress: ((Long) -> Unit)? = null): Long {
+        var total = 0L
+        streamChunks(GpSockCommand.PlaybackGetRawData, fileIndex(index)) { chunk ->
+            destination.write(chunk)
+            total += chunk.size
+            onProgress?.invoke(total)
+        }
+        return total
     }
 
-    /** Reads the run of chunks answering [command] that was just sent, up to the empty one that ends it. */
-    private suspend fun gatherChunks(command: GpSockCommand, onProgress: ((Int) -> Unit)?): ByteArray {
-        val gathered = ByteQueue()
-        while (true) {
-            val response = readAnswer(command)
-            if (response.type == GpSockType.Nak) {
-                throw GpSockRefusedException(command, response.nakCode)
-            }
+    /**
+     * Reads one setting's current value, as the bytes the camera sent.
+     *
+     * A choice comes back as one byte, its value id; text comes back as its characters. The menu
+     * says which a setting is. An id the firmware does not know is answered with a zero rather than
+     * a refusal, so the menu, not this, is what says a setting exists.
+     */
+    suspend fun getSetting(id: Int): ByteArray {
+        val request = ByteArray(4)
+        request.writeInt32LittleEndian(0, id)
+        return demand(GpSockCommand.MenuGetParameter, request).payload
+    }
 
-            if (response.isEndOfChunks) {
-                return gathered.toByteArray()
-            }
-
-            gathered.append(response.payload)
-            onProgress?.invoke(gathered.size)
+    /**
+     * Reads a choice setting's current value id.
+     *
+     * @throws GpSockProtocolException The camera sent nothing for it.
+     */
+    suspend fun getChoice(id: Int): Int {
+        val value = getSetting(id)
+        if (value.isEmpty()) {
+            throw GpSockProtocolException("The camera sent no value for setting 0x${"%04X".format(id)}.")
         }
+
+        return value[0].toInt() and 0xFF
+    }
+
+    /** Reads a text setting, such as the camera's Wi-Fi name. */
+    suspend fun getText(id: Int): String {
+        val value = getSetting(id)
+        val end = value.indexOf(0.toByte()).let { if (it < 0) value.size else it }
+        return String(value, 0, end, Charsets.US_ASCII).trim()
+    }
+
+    /**
+     * Writes a choice setting.
+     *
+     * @param id The menu id, from the camera's own catalogue.
+     * @param value The value id to select, 0 to 255.
+     */
+    suspend fun setSetting(id: Int, value: Int) {
+        require(value in 0..0xFF) { "A choice is one byte, 0 to 255; $value is not." }
+        // Layout from the firmware: a 32-bit little-endian id, a size byte, then the value.
+        demand(GpSockCommand.MenuSetParameter, setPayload(id, byteArrayOf(value.toByte())))
+    }
+
+    /**
+     * Writes a text setting into the camera's fixed-size field.
+     *
+     * The firmware copies exactly [fieldLength] bytes, whatever was sent, so the text is padded with
+     * zeros to that length; sending less would let it copy whatever happened to follow in its buffer.
+     * The length is the camera's, learned by reading the field first.
+     *
+     * @param id The menu id.
+     * @param value Printable ASCII, no longer than the field.
+     * @param fieldLength The size of the camera's field for this setting, 1 to 255.
+     */
+    suspend fun setText(id: Int, value: String, fieldLength: Int) {
+        require(fieldLength in 1..0xFF) { "A text field is 1 to 255 bytes; $fieldLength is not." }
+        require(value.isNotEmpty() && value.length <= fieldLength && value.all { it in ' '..'~' }) {
+            "The camera takes 1 to $fieldLength printable characters here."
+        }
+
+        val field = ByteArray(fieldLength)
+        value.toByteArray(Charsets.US_ASCII).copyInto(field)
+        demand(GpSockCommand.MenuSetParameter, setPayload(id, field))
+    }
+
+    /**
+     * Sends a command whose answer is a run of chunks, handing each to [onChunk] as it arrives.
+     *
+     * Until the camera's last word on this command has been read, it may still be sending. Leaving
+     * early for any reason — cancelled, or [onChunk] failing to take a chunk — must stop it first, or
+     * its remaining frames become the answer to the next request. That clean-up runs even in a
+     * cancelled coroutine, which otherwise could not talk to the camera on its way out.
+     */
+    private suspend fun streamChunks(command: GpSockCommand, payload: ByteArray, onChunk: suspend (ByteArray) -> Unit) {
+        oneAtATime.withLock {
+            throwIfOutOfStep()
+            transport.send(GpSockFrame.encode(command, payload))
+            var finished = false
+            try {
+                while (!finished) {
+                    val response = readAnswer(command)
+                    if (response.type == GpSockType.Nak) {
+                        finished = true
+                        throw GpSockRefusedException(command, response.nakCode)
+                    }
+
+                    finished = response.isEndOfChunks
+                    if (!finished) {
+                        onChunk(response.payload)
+                    }
+                }
+            } catch (failure: Throwable) {
+                // Only a way out before the camera's last word needs stopping; a refusal is its last word.
+                if (!finished) {
+                    withContext(NonCancellable) { windDown(command) }
+                }
+
+                throw failure
+            }
+        }
+    }
+
+    /**
+     * Stops a transfer the camera is still sending, and reads past what it already sent.
+     *
+     * The firmware checks for a new request between frames and abandons the transfer when it sees
+     * one. The request that stopped it is used up in doing so — the reference camera answered the
+     * transfer with a refusal and never answered the request (2026-10-02). If the transfer's last
+     * word is instead the normal end, it had finished before the request arrived, so the camera
+     * answers the request like any other, and that answer is read too. If the camera does not wind
+     * down in time the channel is marked out of step, and every later request fails at once rather
+     * than reading part of a file as its answer.
+     */
+    private suspend fun windDown(transfer: GpSockCommand) {
+        val outcome = runCatching {
+            withTimeout(WIND_DOWN_TIMEOUT_MILLIS) {
+                transport.send(GpSockFrame.encode(GpSockCommand.GetDeviceStatus))
+                var response: GpSockResponse
+                do {
+                    response = readAnswer(transfer)
+                } while (response.type != GpSockType.Nak && !response.isEndOfChunks)
+
+                if (response.isEndOfChunks) {
+                    readAnswer(GpSockCommand.GetDeviceStatus)
+                }
+            }
+        }
+        outcome.exceptionOrNull()?.let { failure ->
+            outOfStep = "A cancelled $transfer did not wind down (${failure.message})."
+        }
+    }
+
+    private fun throwIfOutOfStep() {
+        outOfStep?.let { reason ->
+            throw GpSockProtocolException("The control channel is out of step and must be reopened. $reason")
+        }
+    }
+
+    private fun setPayload(id: Int, value: ByteArray): ByteArray {
+        val payload = ByteArray(5 + value.size)
+        payload.writeInt32LittleEndian(0, id)
+        payload[4] = value.size.toByte()
+        value.copyInto(payload, 5)
+        return payload
     }
 
     /** Reads frames until one answers [expected], skipping and counting any left over from before. */
@@ -284,6 +435,9 @@ class GpSockConnection(private val transport: CameraTransport) : Closeable {
          * most 242. A reader that assumed one answer per frame would silently truncate the menu.
          */
         const val MAX_CHUNK_PAYLOAD = 242
+
+        /** How long a cancelled transfer may take to wind down before the channel is given up on. */
+        const val WIND_DOWN_TIMEOUT_MILLIS = 5_000L
     }
 }
 

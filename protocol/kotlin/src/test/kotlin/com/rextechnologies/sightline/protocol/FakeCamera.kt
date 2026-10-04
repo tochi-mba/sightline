@@ -6,6 +6,7 @@ import com.rextechnologies.sightline.protocol.gpsock.GpSockCommand
 import com.rextechnologies.sightline.protocol.gpsock.GpSockConnection
 import com.rextechnologies.sightline.protocol.gpsock.GpSockFrame
 import com.rextechnologies.sightline.protocol.gpsock.GpSockType
+import com.rextechnologies.sightline.protocol.gpsock.MenuIds
 import com.rextechnologies.sightline.protocol.gpsock.NakCode
 import kotlinx.coroutines.yield
 import java.nio.ByteBuffer
@@ -18,13 +19,17 @@ import java.time.LocalDateTime
  * It answers the way the reference camera and its firmware source do, including the behaviours
  * that are easy to get wrong: long answers arrive in chunks ended by an empty one; browsing is
  * refused unless the camera was put in browse mode first, and thumbnails also while it streams; an
- * empty card is refused as "no storage". Frames can be delivered in awkward pieces so the reader is
- * exercised the way TCP really exercises it.
+ * empty card is refused as "no storage"; a file's bytes are produced only as fast as they are
+ * read, and any new request abandons the transfer — consuming that request without answering it, as
+ * the reference camera did on 2026-10-02; text settings live in fixed-size fields. Frames can be
+ * delivered in awkward pieces so the reader is exercised the way TCP really exercises it.
  */
 class FakeCamera : CameraTransport {
     private val outbox = ArrayDeque<ByteArray>()
     private val inbox = mutableListOf<Byte>()
     private val card = mutableListOf<FakeFile>()
+    private var download: ByteArray? = null
+    private var downloadOffset = 0
 
     /** How many bytes at a time this camera will hand over; 0 means all of them. */
     var dribbleBytes = 0
@@ -73,8 +78,23 @@ class FakeCamera : CameraTransport {
         </Settings></Category></Categories></Menu>
         """.trimIndent()
 
-    /** The settings this camera has been told to change, as id and value. */
+    /** The choice settings this camera has been told to change, as id and value. */
     val settingsWritten = mutableListOf<Pair<Int, Int>>()
+
+    /** Every setting write exactly as it arrived: the id and the bytes after the size byte. */
+    val rawSettingsWritten = mutableListOf<Pair<Int, ByteArray>>()
+
+    /** What each setting reads back as. An id with no entry reads as a single zero, as the firmware does. */
+    val values = mutableMapOf(
+        MenuIds.WIFI_NAME to "ActionCam_000000000000".toByteArray(Charsets.US_ASCII),
+        MenuIds.WIFI_PASSWORD to paddedField("12345678", WIFI_FIELD_LENGTH),
+    )
+
+    /** How many bytes of a file go in each frame of a download. */
+    var downloadChunk = 1000
+
+    /** When set, a download is answered with this refusal instead of the file. */
+    var refuseDownloadWith: NakCode? = null
 
     /** How many files to put on one page of the file list. */
     var pageSize = 4
@@ -137,6 +157,14 @@ class FakeCamera : CameraTransport {
                 continue
             }
 
+            if (download != null) {
+                // The firmware looks for a new request between frames and gives the transfer up, and
+                // the request that stopped it is used up doing so: only the transfer's refusal comes back.
+                download = null
+                nak(GpSockCommand.PlaybackGetRawData.code, NakCode.InvalidCommand)
+                continue
+            }
+
             outbox.addAll(strayFramesBeforeNextAnswer)
             strayFramesBeforeNextAnswer.clear()
             handle(command, payload)
@@ -146,6 +174,21 @@ class FakeCamera : CameraTransport {
     override suspend fun receive(into: ByteArray): Int {
         if (answersSlowly) {
             yield()
+        }
+
+        val transfer = download
+        if (outbox.isEmpty() && transfer != null) {
+            // The next frame of a file is made only when the last one has been taken, which is what
+            // gives a cancel something to interrupt.
+            val size = minOf(downloadChunk, transfer.size - downloadOffset)
+            ack(GpSockCommand.PlaybackGetRawData.code, transfer.copyOfRange(downloadOffset, downloadOffset + size))
+            downloadOffset += size
+            if (downloadOffset == transfer.size) {
+                // The firmware sends the closing frame straight after the last chunk, so by the time a
+                // client has handled that chunk the transfer is already over.
+                download = null
+                ack(GpSockCommand.PlaybackGetRawData.code)
+            }
         }
 
         val next = outbox.removeFirstOrNull() ?: return 0
@@ -166,6 +209,7 @@ class FakeCamera : CameraTransport {
         // What the real camera does when the control socket goes: it stops.
         isRecording = false
         isStreaming = false
+        download = null
     }
 
     private fun handle(command: Int, payload: ByteArray) {
@@ -247,9 +291,33 @@ class FakeCamera : CameraTransport {
                 }
             }
 
+            GpSockCommand.PlaybackGetRawData -> {
+                val refusal = refuseDownloadWith
+                val wanted = find(payload)
+                when {
+                    refusal != null -> nak(command, refusal)
+                    wanted == null -> nak(command, NakCode.InvalidCommand)
+                    else -> {
+                        download = wanted.content
+                        downloadOffset = 0
+                    }
+                }
+            }
+
+            GpSockCommand.MenuGetParameter -> {
+                val id = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN).int
+                ack(command, values[id] ?: bytes(0))
+            }
+
             GpSockCommand.MenuSetParameter -> {
                 val id = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN).int
-                settingsWritten += id to (payload[5].toInt() and 0xFF)
+                val written = payload.copyOfRange(5, 5 + (payload[4].toInt() and 0xFF))
+                rawSettingsWritten += id to written
+                if (written.size == 1) {
+                    settingsWritten += id to (written[0].toInt() and 0xFF)
+                }
+
+                values[id] = written
                 ack(command)
             }
 
@@ -261,6 +329,7 @@ class FakeCamera : CameraTransport {
     private fun isBusyFor(command: GpSockCommand?): Boolean = when (command) {
         GpSockCommand.PlaybackGetFileCount,
         GpSockCommand.PlaybackGetFileList,
+        GpSockCommand.PlaybackGetRawData,
         GpSockCommand.PlaybackDeleteFile,
         -> mode != CameraMode.Browse
 
@@ -318,3 +387,13 @@ class FakeCamera : CameraTransport {
 
 /** A file on the fake camera's card. */
 class FakeFile(val code: Char, val index: Int, val taken: LocalDateTime, val content: ByteArray)
+
+/** The size of the fake camera's Wi-Fi name and password fields. */
+const val WIFI_FIELD_LENGTH = 32
+
+/** A text value as the firmware stores it: zero-padded to its field. */
+fun paddedField(text: String, length: Int): ByteArray {
+    val field = ByteArray(length)
+    text.toByteArray(Charsets.US_ASCII).copyInto(field)
+    return field
+}
