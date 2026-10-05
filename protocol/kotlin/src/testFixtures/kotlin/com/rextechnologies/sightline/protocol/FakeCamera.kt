@@ -8,10 +8,13 @@ import com.rextechnologies.sightline.protocol.gpsock.GpSockFrame
 import com.rextechnologies.sightline.protocol.gpsock.GpSockType
 import com.rextechnologies.sightline.protocol.gpsock.MenuIds
 import com.rextechnologies.sightline.protocol.gpsock.NakCode
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.yield
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.time.LocalDateTime
+import kotlin.time.Duration
 
 /**
  * A camera that needs no hardware, speaking the real wire format.
@@ -49,13 +52,26 @@ class FakeCamera : CameraTransport {
      */
     var hangsUp = false
 
-    /** Which mode the camera is in. Browsing is refused in any other. */
-    var mode = CameraMode.Record
-        private set
+    /**
+     * When set, the camera takes commands and answers none of them, but keeps the connection open: a
+     * read waits until its caller gives up, rather than finding the connection closed.
+     *
+     * This is the half-asleep camera the reference unit became after its access point slept: the port
+     * still accepts, and nothing ever answers. Only a deadline gets a client out.
+     */
+    var goesQuiet = false
 
-    /** Whether the camera is recording to its card. */
+    /** How long the camera takes over each answer it sends, as a busy one does. */
+    var answerDelay: Duration = Duration.ZERO
+
+    /** When set, a download stops sending after this many bytes and the camera goes quiet mid-transfer. */
+    var downloadStallsAfterBytes: Int? = null
+
+    /** Which mode the camera is in. Browsing is refused in any other. Set it to start a test elsewhere. */
+    var mode = CameraMode.Record
+
+    /** Whether the camera is recording to its card; set it as the camera's own button would. */
     var isRecording = false
-        private set
 
     /** Whether the media flow has been started. */
     var isStreaming = false
@@ -114,6 +130,12 @@ class FakeCamera : CameraTransport {
      */
     val forcedAnswers = mutableMapOf<GpSockCommand, ByteArray>()
 
+    /** Commands to refuse, and why, in place of the usual answer. */
+    val forcedRefusals = mutableMapOf<GpSockCommand, NakCode>()
+
+    /** Settings that are acknowledged when written but keep their value, as a firmware ignoring them does. */
+    val ignoredSettings = mutableSetOf<Int>()
+
     /** Frames to send before the answer to the next command, as leftovers from earlier requests. */
     val strayFramesBeforeNextAnswer = mutableListOf<ByteArray>()
 
@@ -153,7 +175,7 @@ class FakeCamera : CameraTransport {
             val command = ((frame[10].toInt() and 0xFF) shl 8) or (frame[11].toInt() and 0xFF)
             val payload = frame.copyOfRange(GpSockFrame.REQUEST_HEADER_LENGTH, frame.size)
             inbox.clear()
-            if (hangsUp) {
+            if (hangsUp || goesQuiet) {
                 continue
             }
 
@@ -176,7 +198,16 @@ class FakeCamera : CameraTransport {
             yield()
         }
 
+        if (answerDelay.isPositive()) {
+            delay(answerDelay)
+        }
+
         val transfer = download
+        val stallAt = downloadStallsAfterBytes
+        if (outbox.isEmpty() && transfer != null && stallAt != null && downloadOffset >= stallAt) {
+            awaitCancellation()
+        }
+
         if (outbox.isEmpty() && transfer != null) {
             // The next frame of a file is made only when the last one has been taken, which is what
             // gives a cancel something to interrupt.
@@ -189,6 +220,10 @@ class FakeCamera : CameraTransport {
                 download = null
                 ack(GpSockCommand.PlaybackGetRawData.code)
             }
+        }
+
+        if (outbox.isEmpty() && goesQuiet) {
+            awaitCancellation()
         }
 
         val next = outbox.removeFirstOrNull() ?: return 0
@@ -214,6 +249,12 @@ class FakeCamera : CameraTransport {
 
     private fun handle(command: Int, payload: ByteArray) {
         val known = GpSockCommand.fromCode(command)
+        val refusal = known?.let { forcedRefusals[it] }
+        if (refusal != null) {
+            nak(command, refusal)
+            return
+        }
+
         val forced = known?.let { forcedAnswers[it] }
         if (forced != null) {
             ack(command, forced)
@@ -317,7 +358,10 @@ class FakeCamera : CameraTransport {
                     settingsWritten += id to (written[0].toInt() and 0xFF)
                 }
 
-                values[id] = written
+                if (id !in ignoredSettings) {
+                    values[id] = written
+                }
+
                 ack(command)
             }
 
@@ -340,7 +384,7 @@ class FakeCamera : CameraTransport {
 
     /** A page of the file list: the files after the one the request names, or from the start. */
     private fun page(payload: ByteArray): ByteArray {
-        val after = if (payload[0].toInt() == 1 || repeatsFirstPage) 0 else payload.readUInt16LittleEndian(1)
+        val after = if (payload[0].toInt() == 1 || repeatsFirstPage) 0 else payload.uint16At(1)
         val page = card.filter { it.index > after }.take(pageSize)
         val bytes = ByteArray(1 + page.size * CameraFile.MINIMUM_ENTRY_LENGTH)
         bytes[0] = page.size.toByte()
@@ -348,21 +392,21 @@ class FakeCamera : CameraTransport {
             val at = 1 + i * CameraFile.MINIMUM_ENTRY_LENGTH
             val kilobytes = (file.content.size + 1023) / 1024
             bytes[at] = file.code.code.toByte()
-            bytes.writeUInt16LittleEndian(at + 1, file.index)
+            bytes.putUInt16(at + 1, file.index)
             bytes[at + 3] = (file.taken.year - 2000).toByte()
             bytes[at + 4] = file.taken.monthValue.toByte()
             bytes[at + 5] = file.taken.dayOfMonth.toByte()
             bytes[at + 6] = file.taken.hour.toByte()
             bytes[at + 7] = file.taken.minute.toByte()
             bytes[at + 8] = file.taken.second.toByte()
-            bytes.writeInt32LittleEndian(at + 9, kilobytes)
+            bytes.putInt32(at + 9, kilobytes)
         }
 
         return bytes
     }
 
     private fun find(payload: ByteArray): FakeFile? {
-        val index = payload.readUInt16LittleEndian(0)
+        val index = payload.uint16At(0)
         return card.firstOrNull { it.index == index }
     }
 
@@ -396,4 +440,19 @@ fun paddedField(text: String, length: Int): ByteArray {
     val field = ByteArray(length)
     text.toByteArray(Charsets.US_ASCII).copyInto(field)
     return field
+}
+
+// The protocol's own byte helpers are internal to it, so the fake keeps its own, little-endian as
+// the firmware writes every number.
+private fun ByteArray.uint16At(offset: Int): Int =
+    (this[offset].toInt() and 0xFF) or
+        ((this[offset + 1].toInt() and 0xFF) shl 8)
+
+private fun ByteArray.putUInt16(offset: Int, value: Int) {
+    this[offset] = value.toByte()
+    this[offset + 1] = (value shr 8).toByte()
+}
+
+private fun ByteArray.putInt32(offset: Int, value: Int) {
+    ByteBuffer.wrap(this, offset, 4).order(ByteOrder.LITTLE_ENDIAN).putInt(value)
 }

@@ -1,5 +1,8 @@
 plugins {
     id("sightline.jvm-library")
+    // The fake camera, both its control channel and its stream, shared with every module that tests
+    // against a camera: the Android app's session is held to the same behaviour this library is.
+    `java-test-fixtures`
 }
 
 // The committed vectors, including the reference camera's own menu, are the test data: the very files
@@ -14,6 +17,8 @@ sightline {
 
 dependencies {
     implementation(libs.kotlinx.coroutines.core)
+
+    testFixturesImplementation(libs.kotlinx.coroutines.core)
 
     testImplementation(kotlin("test-junit"))
     testImplementation(libs.junit)
