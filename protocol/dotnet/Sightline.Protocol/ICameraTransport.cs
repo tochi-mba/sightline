@@ -47,6 +47,12 @@ public sealed class TcpCameraTransport : ICameraTransport
         this.bindTo = bindTo;
     }
 
+    /// <summary>Where the camera is.</summary>
+    public IPEndPoint Endpoint => endpoint;
+
+    /// <summary>The local address the connection is sent from, or null when the routing table decides.</summary>
+    public IPAddress? BoundTo => bindTo;
+
     /// <inheritdoc />
     public bool IsConnected => socket?.Connected ?? false;
 

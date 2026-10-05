@@ -88,5 +88,9 @@ public sealed class TcpCameraTransportTests
     public void A_transport_needs_somewhere_to_connect()
     {
         Should.Throw<ArgumentNullException>(() => new TcpCameraTransport(null!));
+        var bound = new TcpCameraTransport(new IPEndPoint(IPAddress.Loopback, 8081), IPAddress.Loopback);
+        bound.Endpoint.ShouldBe(new IPEndPoint(IPAddress.Loopback, 8081));
+        bound.BoundTo.ShouldBe(IPAddress.Loopback);
+        new TcpCameraTransport(new IPEndPoint(IPAddress.Loopback, 8081)).BoundTo.ShouldBeNull();
     }
 }
