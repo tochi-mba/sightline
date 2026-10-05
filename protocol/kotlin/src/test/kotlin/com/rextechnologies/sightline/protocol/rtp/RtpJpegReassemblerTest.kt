@@ -129,7 +129,9 @@ class RtpJpegReassemblerTest {
     }
 
     @Test
-    fun `packets from another source are ignored rather than mixed in`() {
+    fun `a header from another source never starts a packet so it never sets the geometry`() {
+        // With no length on the wire another sender's packet cannot be cut out of the stream; what
+        // the source lock guarantees is that its header is never taken for one of the camera's.
         val mine = packets(fakeJpeg(400), 640, 360, 10_000).single()
         val theirs = packets(fakeJpeg(400), 320, 240, 10_000, ssrc = 0x99999999.toInt()).single()
         val reassembler = RtpJpegReassembler()
@@ -138,7 +140,26 @@ class RtpJpegReassemblerTest {
         val frames = reassembler.push(theirs + mine)
 
         assertEquals(1, frames.size)
-        assertTrue(frames.all { it.width == 640 })
+        assertTrue(frames.all { it.width == 640 && it.height == 360 })
+    }
+
+    @Test
+    fun `picture data that looks like another senders header does not cut the first packet short`() {
+        // Found by the benchmark suite: before the stream's source was known, the end of the very
+        // first packet was looked for by accepting a header from any sender, so twelve bytes of
+        // picture data shaped like one cut the first packet there and the rest was thrown away.
+        val lookalike = packet(ByteArray(0), ssrc = 0x11111111).copyOfRange(0, 12)
+        val jpeg = fakeJpeg(1000)
+        lookalike.copyInto(jpeg, 300)
+        val reassembler = RtpJpegReassembler()
+
+        val first = packet(jpeg, sequence = 0)
+        val second = packet(fakeJpeg(40), sequence = 1, timestamp = 2000u)
+
+        val frames = reassembler.push(first + second)
+
+        assertEquals(1, frames.size)
+        assertContentEquals(jpeg, frames.single().jpeg)
     }
 
     @Test

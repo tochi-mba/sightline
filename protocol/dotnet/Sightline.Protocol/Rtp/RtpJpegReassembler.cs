@@ -80,6 +80,11 @@ public sealed class RtpJpegReassembler
                 return finished;
             }
 
+            // The stream's sender is fixed by its first packet before that packet's end is looked
+            // for. Otherwise the end is found by accepting a header from anyone, and twelve bytes of
+            // picture data shaped like one cut the first packet short; the rest is then thrown away
+            // as noise and the first picture arrives without its start.
+            synchronisationSource ??= BinaryPrimitives.ReadUInt32BigEndian(span[(start + 8)..]);
             var next = FindPacketStart(span, start + RtpHeaderLength);
             if (next < 0)
             {
@@ -139,10 +144,10 @@ public sealed class RtpJpegReassembler
             return;
         }
 
-        // The first packet fixes the source. From then on a packet from any other sender is never
-        // split out at all — IsPacketStart does not recognise its header — so its bytes are skipped
-        // as noise rather than mixed into this picture.
-        synchronisationSource ??= BinaryPrimitives.ReadUInt32BigEndian(packet.AsSpan(8));
+        // Push fixed the source from the first packet. With no length on the wire, a packet from any
+        // other sender cannot be told from picture data: its header is not recognised, so its bytes
+        // stay inside the packet around them. The camera sends one source — only the video track is
+        // set up — so this costs nothing in practice, and it is stated rather than claimed away.
 
         var marker = (packet[1] & 0x80) != 0;
         var sequence = BinaryPrimitives.ReadUInt16BigEndian(packet.AsSpan(2));

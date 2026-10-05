@@ -75,6 +75,14 @@ class RtpJpegReassembler {
                 return finished
             }
 
+            // The stream's sender is fixed by its first packet before that packet's end is looked for.
+            // Otherwise the end is found by accepting a header from anyone, and twelve bytes of
+            // picture data shaped like one cut the first packet short; the rest is then thrown away as
+            // noise and the first picture arrives without its start.
+            if (synchronisationSource == null) {
+                synchronisationSource = stream.array.readInt32BigEndian(start + 8)
+            }
+
             val next = findPacketStart(start + RTP_HEADER_LENGTH)
             if (next < 0) {
                 // The last packet in the buffer is only complete once the next one has begun, so
@@ -95,9 +103,10 @@ class RtpJpegReassembler {
     /**
      * Whether a packet begins at [offset], which the caller has checked leaves room for a header.
      *
-     * Packets from another synchronisation source are not packet starts: another sender's fragments
-     * mixed into this picture would produce a file that decodes to rubbish, so they are passed over
-     * with the bytes around them.
+     * A header from another synchronisation source is not a packet start. With no length on the wire
+     * such a packet cannot be cut out of the stream — its bytes stay inside the packet around them —
+     * but it can never start a picture or set a frame's size. The camera sends one source, since only
+     * the video track is set up, so this costs nothing in practice.
      */
     private fun isPacketStart(offset: Int): Boolean {
         val bytes = stream.array
@@ -133,12 +142,6 @@ class RtpJpegReassembler {
     private fun consume(packet: ByteArray, finished: MutableList<CameraFrame>) {
         if (packet.size < RTP_HEADER_LENGTH + JPEG_HEADER_LENGTH) {
             return
-        }
-
-        // The first packet decides the stream's source. Every later one was matched against it in
-        // isPacketStart before it was taken as a packet at all, so no other sender gets this far.
-        if (synchronisationSource == null) {
-            synchronisationSource = packet.readInt32BigEndian(8)
         }
 
         val marker = (packet.unsignedAt(1) and 0x80) != 0

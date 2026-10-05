@@ -141,8 +141,11 @@ public sealed class RtpJpegReassemblerTests
     }
 
     [Fact]
-    public void Packets_from_another_source_are_ignored_rather_than_mixed_in()
+    public void A_header_from_another_source_never_starts_a_packet_so_it_never_sets_the_geometry()
     {
+        // With no length on the wire another sender's packet cannot be cut out of the stream; what
+        // the source lock guarantees is that its header is never taken for one of the camera's, so
+        // it can never start a picture or change the size a frame reports.
         var mine = Packets(FakeJpeg(400), 640, 360, 10_000).Single();
         var theirs = Packets(FakeJpeg(400), 320, 240, 10_000, ssrc: 0x99999999).Single();
         var reassembler = new RtpJpegReassembler();
@@ -150,7 +153,21 @@ public sealed class RtpJpegReassemblerTests
         reassembler.Push(mine);
         var frames = reassembler.Push(theirs.Concat(mine).ToArray());
 
-        frames.ShouldAllBe(f => f.Width == 640);
+        frames.ShouldAllBe(f => f.Width == 640 && f.Height == 360);
+    }
+
+    [Fact]
+    public void Bytes_before_the_first_packet_are_dropped_once_a_packet_is_found()
+    {
+        // A connection joined part-way through a packet starts with its tail. Those bytes are left
+        // behind as soon as a real header is found, and the pictures after it are whole.
+        var jpeg = FakeJpeg(500);
+        var reassembler = new RtpJpegReassembler();
+
+        reassembler.Push([1, 2, 3, 4, 5, .. Raw(jpeg, 0, marker: true, timestamp: 1)]).ShouldBeEmpty();
+        var frames = reassembler.Push(Raw(FakeJpeg(40), 0, marker: true, timestamp: 2));
+
+        frames.Single().Jpeg.ShouldBe(jpeg);
     }
 
     [Fact]
@@ -224,6 +241,29 @@ public sealed class RtpJpegReassemblerTests
         var frames = new RtpJpegReassembler().Push(wire);
 
         frames.Select(f => f.Jpeg).ShouldBe([good]);
+    }
+
+    [Fact]
+    public void Picture_data_that_looks_like_another_senders_header_does_not_cut_the_first_packet_short()
+    {
+        // Found by the benchmark suite: before the stream's source was known, the end of the very
+        // first packet was looked for by accepting a header from any sender, so twelve bytes of
+        // picture data shaped like one cut the first packet there and the rest was thrown away as
+        // noise. The first picture of every live view could arrive missing its start.
+        var lookalike = new byte[12];
+        lookalike[0] = 0x80;
+        lookalike[1] = 0x80 | RtpJpegReassembler.JpegPayloadType;
+        BinaryPrimitives.WriteUInt32BigEndian(lookalike.AsSpan(8), 0x11111111);
+        var jpeg = FakeJpeg(1000);
+        lookalike.CopyTo(jpeg, 300);
+        var wire = Raw(jpeg, 0, marker: true, timestamp: 1)
+            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 2))
+            .ToArray();
+
+        var frames = new RtpJpegReassembler().Push(wire);
+
+        frames.Count.ShouldBe(1);
+        frames[0].Jpeg.ShouldBe(jpeg);
     }
 
     [Fact]
