@@ -210,6 +210,7 @@ class SettingsTest {
         assertFalse(AppSettings.CameraPassword.accepts("x".repeat(64)))
         assertFalse(AppSettings.CameraPassword.accepts("tab\tthere!"))
         assertFalse(AppSettings.CameraPassword.accepts("caf\u00e9-password"))
+        assertEquals("8 to 63 letters, numbers or symbols.", AppSettings.CameraPassword.rule)
     }
 
     @Test
@@ -221,5 +222,8 @@ class SettingsTest {
         assertNull(settings[AppSettings.LastVersion])
         settings[AppSettings.LastVersion] = "0.1.0"
         assertEquals("0.1.0", settings[AppSettings.LastVersion])
+        settings[AppSettings.LastVersion] = null
+        assertNull(settings[AppSettings.LastVersion])
+        assertFailsWith<IllegalArgumentException> { settings[AppSettings.CameraName] = " " }
     }
 }

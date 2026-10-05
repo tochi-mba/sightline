@@ -126,7 +126,7 @@ class Amount(
     override fun accepts(value: Int): Boolean = value in range && (value - range.first) % step == 0
 }
 
-/** Free text that [valid] accepts, or nothing. */
+/** Free text that [valid] accepts, or nothing: what the app records for itself, never shown. */
 class Text(
     key: String,
     group: SettingGroup,
@@ -141,6 +141,27 @@ class Text(
     override fun encode(value: String?): String = value.toString()
 
     override fun accepts(value: String?): Boolean = value == null || valid(value)
+}
+
+/**
+ * A Wi-Fi password. Never unset: its default is the one the camera ships with.
+ *
+ * @property rule What [valid] accepts, in words: what the person is told when what they typed is not it.
+ */
+class Password(
+    key: String,
+    group: SettingGroup,
+    title: String,
+    summary: String,
+    default: String,
+    val rule: String,
+    private val valid: (String) -> Boolean,
+) : Setting<String>(key, group, title, summary, default) {
+    override fun decode(text: String): String? = text.takeIf(valid)
+
+    override fun encode(value: String): String = value
+
+    override fun accepts(value: String): Boolean = valid(value)
 }
 
 /** How the live picture is laid over the screen. */
@@ -176,12 +197,13 @@ object AppSettings {
         "Tries to get a lost camera back, five times, before saying it is gone.",
         true,
     )
-    val CameraPassword = Text(
+    val CameraPassword = Password(
         "connection.camera_password",
         SettingGroup.Connection,
         "Camera Wi-Fi password",
         "What the camera's screen shows under WPA2. Most cameras keep the default.",
         CameraNetwork.DEFAULT_PASSWORD,
+        "8 to 63 letters, numbers or symbols.",
     ) { it.length in 8..63 && it.all { character -> character in ' '..'~' } }
     val CameraName = Text(
         "connection.camera_name",
