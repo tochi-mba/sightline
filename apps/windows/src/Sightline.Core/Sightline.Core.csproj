@@ -7,6 +7,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Sightline.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../../../../protocol/dotnet/Sightline.Protocol/Sightline.Protocol.csproj" />
   </ItemGroup>
 

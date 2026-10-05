@@ -19,4 +19,9 @@
     <ProjectReference Include="../../../../protocol/dotnet/Sightline.Testing/Sightline.Testing.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The reference camera's own menu: the controller is tested against the settings a real camera has. -->
+    <None Include="../../../../protocol/golden/**/*" CopyToOutputDirectory="PreserveNewest" LinkBase="golden" />
+  </ItemGroup>
+
 </Project>

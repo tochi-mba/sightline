@@ -56,4 +56,10 @@ public sealed class WhatsNewTests
         new("0.4.0", ["Four."]),
         new("0.3.0", ["Three."]),
     ];
+
+    [Fact]
+    public void Without_notes_given_the_curated_ones_are_used()
+    {
+        WhatsNewCatalog.Since("0.0.1", "99.0.0").ShouldBe(WhatsNewCatalog.Entries);
+    }
 }
