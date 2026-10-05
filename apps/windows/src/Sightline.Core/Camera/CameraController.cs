@@ -903,7 +903,7 @@ public sealed class CameraController : IAsyncDisposable
             // Until cancelled, which a stream being read or a wait before the next start ends by throwing.
             while (true)
             {
-                Update(s => s with { Live = LiveView.Starting.Instance });
+                ShowLive(LiveView.Starting.Instance, cancellationToken);
                 Stopwatch? window = null;
                 var windowFrames = 0;
                 string reason;
@@ -917,7 +917,7 @@ public sealed class CameraController : IAsyncDisposable
                         {
                             // The first picture starts the count: how long the stream took to start is not its rate.
                             window = Stopwatch.StartNew();
-                            Update(s => s with { Live = new LiveView.Playing(0) });
+                            ShowLive(new LiveView.Playing(0), cancellationToken);
                         }
                         else
                         {
@@ -925,7 +925,7 @@ public sealed class CameraController : IAsyncDisposable
                             if (window.Elapsed >= TimeSpan.FromSeconds(1))
                             {
                                 var perSecond = windowFrames / window.Elapsed.TotalSeconds;
-                                Update(s => s with { Live = new LiveView.Playing(perSecond) });
+                                ShowLive(new LiveView.Playing(perSecond), cancellationToken);
                                 window.Restart();
                                 windowFrames = 0;
                             }
@@ -940,7 +940,7 @@ public sealed class CameraController : IAsyncDisposable
                 }
 
                 failures++;
-                Update(s => s with { Live = new LiveView.Interrupted(reason) });
+                ShowLive(new LiveView.Interrupted(reason), cancellationToken);
                 var wait = timing.LiveRetry * failures;
                 await Task.Delay(wait < timing.LiveRetryCap ? wait : timing.LiveRetryCap, cancellationToken).ConfigureAwait(false);
             }
@@ -950,6 +950,16 @@ public sealed class CameraController : IAsyncDisposable
             // Stopped on purpose.
         }
     }
+
+    /// <summary>
+    /// Shows <paramref name="view"/> as the live view's state, unless the run it belongs to was stopped.
+    /// </summary>
+    /// <remarks>
+    /// A run is stopped under the same lock this checks under, so a run that is stopping can never write
+    /// Starting or Interrupted over the Off or Paused that stopping it showed.
+    /// </remarks>
+    private void ShowLive(LiveView view, CancellationToken run) =>
+        Update(s => run.IsCancellationRequested ? s : s with { Live = view });
 
     private Task<T> AskAsync<T>(Connected connected, Func<GpSockConnection, CancellationToken, Task<T>> request, TimeSpan? limit = null) =>
         AskCoreAsync(connected, request, limit ?? timing.Answer);

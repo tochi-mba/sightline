@@ -220,6 +220,26 @@ public sealed class OperationsTests
     }
 
     [Fact]
+    public async Task Letting_the_live_view_go_while_a_picture_is_handed_out_leaves_it_off()
+    {
+        await using var camera = new ControllerHarness();
+        await camera.ConnectedAsync();
+        var pictures = 0;
+        // Let go of from the stream's own thread, just before that run would say it is playing.
+        camera.Controller.FrameArrived += _ =>
+        {
+            Interlocked.Increment(ref pictures);
+            camera.Controller.ReleaseLive("window");
+        };
+
+        camera.Controller.HoldLive("window");
+        await ControllerHarness.EventuallyAsync(() => Volatile.Read(ref pictures) > 0);
+        await Task.Delay(200);
+
+        camera.State.Live.ShouldBe(LiveView.Off.Instance);
+    }
+
+    [Fact]
     public async Task An_operation_cut_off_by_disconnecting_ends_without_a_word()
     {
         await using var camera = new ControllerHarness();
