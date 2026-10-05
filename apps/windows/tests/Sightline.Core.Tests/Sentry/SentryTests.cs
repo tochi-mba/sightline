@@ -189,16 +189,4 @@ public sealed class SentryTests
         Should.Throw<ArgumentException>(() => new SentryWatch(SentrySettings.Default with { Quiet = TimeSpan.Zero }));
         new SentryWatch(SentrySettings.Default).State.ShouldBe(SentryState.Disarmed);
     }
-
-    /// <summary>A clock moved by the test.</summary>
-    private sealed class ManualClock : TimeProvider
-    {
-        private long ticks;
-
-        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
-
-        public override long GetTimestamp() => ticks;
-
-        public void Advance(TimeSpan by) => ticks += by.Ticks;
-    }
 }
