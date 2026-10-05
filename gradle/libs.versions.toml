@@ -27,6 +27,7 @@ min-sdk = "29"
 # installed here (platform 36 is the only one available), so these stay on the pins Flint and
 # textwire already build with on this machine rather than on the newest releases.
 androidx-activity-compose = "1.13.0"
+androidx-core = "1.16.0"
 compose-bom = "2026.05.00"
 
 coroutines = "1.11.0"
@@ -38,6 +39,7 @@ androidx-test-ext-junit = "1.3.0"
 
 [libraries]
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity-compose" }
+androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
 
 # Versions from the BOM, so every Compose artifact moves together.
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }

@@ -29,10 +29,11 @@ rootProject.name = "Sightline"
 include(":protocol")
 project(":protocol").projectDir = file("protocol/kotlin")
 
-// The Android app's pure-JVM logic, and the design system it draws with, under apps/android.
-// ":android" is pointed at apps/android too, because Gradle refuses a project whose directory does not
-// exist.
-include(":android:core", ":android:design")
+// The Android app is three projects under apps/android: the application, its pure-JVM logic, and the
+// design system it draws with. ":android" is pointed at apps/android too, because Gradle refuses a
+// project whose directory does not exist.
+include(":android:app", ":android:core", ":android:design")
 project(":android").projectDir = file("apps/android")
+project(":android:app").projectDir = file("apps/android/app")
 project(":android:core").projectDir = file("apps/android/core")
 project(":android:design").projectDir = file("apps/android/design")
