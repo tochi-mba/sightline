@@ -39,8 +39,8 @@ public sealed record SentryStatus(bool Armed, SentryState Watch, double Score, I
 /// <param name="Records">Whether an alarm starts the camera recording to its card until it ends.</param>
 public sealed record SentryOptions(SentrySettings Watch, bool SaveSnapshots, bool Records)
 {
-    /// <summary>The default watch, saving snapshots, not recording.</summary>
-    public static SentryOptions Default { get; } = new(SentrySettings.Default, true, false);
+    /// <summary>The default watch, saving snapshots and recording, as the Android app does.</summary>
+    public static SentryOptions Default { get; } = new(SentrySettings.Default, true, true);
 }
 
 /// <summary>

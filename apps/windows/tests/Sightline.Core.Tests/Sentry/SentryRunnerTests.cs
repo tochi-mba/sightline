@@ -216,7 +216,7 @@ public sealed class SentryRunnerTests
         Should.Throw<ArgumentNullException>(() => new SentryRunner(camera.Controller, () => options, actions, null!));
         using var runner = new SentryRunner(camera.Controller, () => options, actions, Sample);
         runner.Status.ShouldBe(SentryStatus.Off);
-        SentryOptions.Default.Records.ShouldBeFalse();
+        SentryOptions.Default.Records.ShouldBeTrue();
     }
 
     private sealed class RecordedActions : ISentryActions
