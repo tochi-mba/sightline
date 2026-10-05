@@ -35,5 +35,8 @@ protocol as measured on real hardware.
 | `dotnet build Sightline.slnx` | Builds the protocol, core and command line. |
 | `dotnet test Sightline.slnx` | Runs every .NET test. |
 | `./gradlew :protocol:check` | Lints and tests the Kotlin protocol, and holds it to 100% line and branch coverage. |
+| `./gradlew :android:core:check` | Lints and tests the Android app's logic, at 100% of lines and branches. |
+| `./gradlew :android:app:check` | Lints and tests the Android app under Robolectric: logic at 100%, screens at 99% of lines. See `docs/ANDROID.md`. |
+| `./gradlew :android:app:assembleDebug` | Builds the debug APK. |
 | `./tools/scripts/bench.ps1` | Runs the benchmark suite and compares it with the baseline; `-Record` replaces the baseline. See `docs/PERFORMANCE.md`. |
 | `python -m unittest discover tools/scripts/tests` | Tests the repository's own scripts: the site checker and the benchmark comparison. |
