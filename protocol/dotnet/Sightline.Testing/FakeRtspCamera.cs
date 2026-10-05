@@ -22,6 +22,7 @@ public sealed class FakeRtspCamera : ICameraTransport
         + "m=video 0 RTP/AVP 26\r\na=control:track0\r\nm=audio 0 RTP/AVP 97\r\na=rtpmap:97 L16/16000/1\r\na=control:track1\r\n";
 
     private readonly Queue<byte[]> outbox = new();
+    private readonly HashSet<byte[]> paced = new(ReferenceEqualityComparer.Instance);
     private ushort sequence;
 
     /// <summary>Whether the control channel has started the media flow; no packets flow until it has.</summary>
@@ -47,6 +48,9 @@ public sealed class FakeRtspCamera : ICameraTransport
 
     /// <summary>When set, a TEARDOWN fails the way a dropped connection does.</summary>
     public bool TeardownFails { get; set; }
+
+    /// <summary>How long each picture takes to arrive after the one before, as the real camera's dozen a second do.</summary>
+    public TimeSpan Pace { get; set; }
 
     /// <summary>The verbs received, in order.</summary>
     public List<string> Verbs { get; } = [];
@@ -90,7 +94,9 @@ public sealed class FakeRtspCamera : ICameraTransport
 
                     foreach (var frame in Frames)
                     {
-                        outbox.Enqueue(Packet(frame));
+                        var packet = Packet(frame);
+                        paced.Add(packet);
+                        outbox.Enqueue(packet);
                     }
 
                     // A picture is only known to be over when the next packet starts, as on the wire.
@@ -126,6 +132,11 @@ public sealed class FakeRtspCamera : ICameraTransport
 
             // Quiet: nothing comes until whoever is reading gives up.
             await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (Pace > TimeSpan.Zero && paced.Remove(outbox.Peek()))
+        {
+            await Task.Delay(Pace, cancellationToken).ConfigureAwait(false);
         }
 
         // At most the reader's buffer, like a real socket; the remainder waits its turn.

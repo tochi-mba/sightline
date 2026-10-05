@@ -35,11 +35,30 @@ public sealed class FakeCamera : ICameraTransport
     /// </remarks>
     public bool HangsUp { get; set; }
 
+    /// <summary>
+    /// When set, the camera takes commands and answers none of them, but keeps the connection open: a
+    /// read waits until its caller gives up, rather than finding the connection closed. The half-asleep
+    /// camera the reference unit became after its access point slept.
+    /// </summary>
+    public bool GoesQuiet { get; set; }
+
+    /// <summary>When set, a download stops sending after this many bytes, mid-transfer.</summary>
+    public int? DownloadStallsAfterBytes { get; set; }
+
+    /// <summary>How long the camera takes over each answer, as a busy one does.</summary>
+    public TimeSpan AnswerDelay { get; set; }
+
+    /// <summary>Commands to refuse, and why, in place of the usual answer.</summary>
+    public Dictionary<GpSockCommand, NakCode> ForcedRefusals { get; } = [];
+
+    /// <summary>Settings that are acknowledged when written but keep their value.</summary>
+    public HashSet<int> IgnoredSettings { get; } = [];
+
     /// <summary>Which mode the camera is in. Browsing is refused in any other.</summary>
-    public CameraMode Mode { get; private set; } = CameraMode.Record;
+    public CameraMode Mode { get; set; } = CameraMode.Record;
 
     /// <summary>Whether the camera is recording to its card.</summary>
-    public bool IsRecording { get; private set; }
+    public bool IsRecording { get; set; }
 
     /// <summary>Whether the media flow has been started.</summary>
     public bool IsStreaming { get; set; }
@@ -151,7 +170,7 @@ public sealed class FakeCamera : ICameraTransport
             var command = (GpSockCommand)((frame[10] << 8) | frame[11]);
             var payload = frame.AsSpan(GpSockFrame.RequestHeaderLength).ToArray();
             inbox.Clear();
-            if (HangsUp)
+            if (HangsUp || GoesQuiet)
             {
                 continue;
             }
@@ -172,6 +191,12 @@ public sealed class FakeCamera : ICameraTransport
             }
 
             StrayFramesBeforeNextAnswer.Clear();
+            if (ForcedRefusals.TryGetValue(command, out var refusal))
+            {
+                Nak(command, refusal);
+                continue;
+            }
+
             if (ForcedAnswers.TryGetValue(command, out var forced))
             {
                 Ack(command, forced);
@@ -185,8 +210,23 @@ public sealed class FakeCamera : ICameraTransport
     }
 
     /// <inheritdoc />
-    public Task<int> ReceiveAsync(Memory<byte> into, CancellationToken cancellationToken)
+    public async Task<int> ReceiveAsync(Memory<byte> into, CancellationToken cancellationToken)
     {
+        if (AnswerDelay > TimeSpan.Zero)
+        {
+            await Task.Delay(AnswerDelay, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (outbox.Count == 0 && download is { } stalled && DownloadStallsAfterBytes is { } stallAt && stalled.Offset >= stallAt)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (outbox.Count == 0 && GoesQuiet)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+        }
+
         if (outbox.Count == 0 && download is { } transfer)
         {
             // The next frame of a file is made only when the last one has been taken, which is
@@ -205,7 +245,7 @@ public sealed class FakeCamera : ICameraTransport
 
         if (outbox.Count == 0)
         {
-            return Task.FromResult(0);
+            return 0;
         }
 
         var next = outbox.Peek();
@@ -223,7 +263,7 @@ public sealed class FakeCamera : ICameraTransport
             }
         }
 
-        return Task.FromResult(take);
+        return take;
     }
 
     /// <inheritdoc />
@@ -353,7 +393,11 @@ public sealed class FakeCamera : ICameraTransport
                     SettingsWritten.Add((id, written[0]));
                 }
 
-                Values[id] = written;
+                if (!IgnoredSettings.Contains(id))
+                {
+                    Values[id] = written;
+                }
+
                 Ack(command, []);
                 break;
 
