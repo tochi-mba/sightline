@@ -323,4 +323,27 @@ class LibraryTest {
         assertEquals("Stop recording to delete from the card.", camera.state.notice?.text)
         assertEquals(2, camera.control.files.size)
     }
+
+    @Test
+    fun `files safely copied can be deleted from the card, and only those`() = runTest {
+        val camera = cameraWithCard()
+        val files = camera.listed()
+        val missing = CameraFile('J', 99, taken, 1)
+
+        camera.controller.download(listOf(files[0], missing), FakeSink(), deleteAfter = true)!!.join()
+
+        assertEquals(listOf(2), camera.control.files.map { it.index })
+        assertEquals(listOf(2), camera.state.library.files!!.map { it.index })
+    }
+
+    @Test
+    fun `when nothing copied, nothing is deleted`() = runTest {
+        val camera = cameraWithCard()
+        camera.listed()
+        camera.control.refuseDownloadWith = NakCode.FullStorage
+
+        camera.controller.download(camera.state.library.files!!, FakeSink(), deleteAfter = true)!!.join()
+
+        assertEquals(2, camera.control.files.size)
+    }
 }

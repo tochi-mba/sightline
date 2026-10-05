@@ -22,8 +22,8 @@ sealed interface Connection {
     /** Connected; commands are accepted. */
     data object Connected : Connection
 
-    /** The camera was lost, and this is attempt [attempt] of getting it back. */
-    data class Reconnecting(val attempt: Int, val problem: Problem) : Connection
+    /** The camera was lost, and this is attempt [attempt] of at most [of] to get it back. */
+    data class Reconnecting(val attempt: Int, val of: Int, val problem: Problem) : Connection
 
     /** Not connected, because of [problem]. */
     data class Failed(val problem: Problem) : Connection

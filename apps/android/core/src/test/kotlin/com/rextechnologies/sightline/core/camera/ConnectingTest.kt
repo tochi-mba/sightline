@@ -10,6 +10,7 @@ import com.rextechnologies.sightline.protocol.gpsock.MenuIds
 import com.rextechnologies.sightline.protocol.gpsock.MenuSettingKind
 import com.rextechnologies.sightline.protocol.gpsock.NakCode
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
@@ -192,6 +193,7 @@ class ConnectingTest {
         camera.until { it.isConnected }
 
         assertEquals(1, reconnecting.attempt)
+        assertEquals(5, reconnecting.of)
         assertEquals(ProblemKind.Lost, reconnecting.problem.kind)
         assertTrue(first.closed)
         assertEquals(CameraNetwork(name = "ActionCam_000000000000"), camera.link.requests[1])
@@ -294,6 +296,22 @@ class ConnectingTest {
     }
 
     @Test
+    fun `an operation cut off by disconnecting ends without a word`() = runTest {
+        val camera = ControllerHarness(this)
+        camera.connected()
+        camera.control.goesQuiet = true
+
+        val photo = camera.controller.takePhoto()!!
+        runCurrent()
+        camera.controller.disconnect().join()
+        photo.join()
+
+        assertNull(camera.state.notice)
+        assertNull(camera.state.task)
+        assertEquals(Connection.Idle, camera.state.connection)
+    }
+
+    @Test
     fun `a failed connection can be tried again`() = runTest {
         val camera = ControllerHarness(this)
         camera.link.failures += LinkFailure.Unavailable
@@ -324,6 +342,23 @@ class ConnectingTest {
         assertNull(camera.controller.toggleRecording())
 
         assertEquals("The camera is reconnecting. Try again in a moment.", camera.state.notice?.text)
+    }
+
+    @Test
+    fun `with reconnecting switched off a lost camera is reported at once`() = runTest {
+        val camera = ControllerHarness(this)
+        val controller =
+            CameraController(backgroundScope, camera.link, timeSource = testScheduler.timeSource, reconnects = {
+                false
+            })
+        controller.connect(CameraNetwork())
+        controller.state.first { it.isConnected }
+
+        camera.link.lease.lose()
+        val failed = controller.state.first { it.connection is Connection.Failed }.connection as Connection.Failed
+
+        assertEquals(ProblemKind.Lost, failed.problem.kind)
+        assertEquals(1, camera.link.requests.size)
     }
 
     /** A control port that accepts the connection attempt and never completes it. */

@@ -52,6 +52,8 @@ class ShutterAndSettingsTest {
 
         assertEquals(CameraMode.Record, camera.control.mode)
         assertTrue(camera.control.isRecording)
+        // Found writing the Windows port: the app went on calling it photo mode while recording.
+        assertEquals(CaptureMode.Video, camera.state.mode)
     }
 
     @Test

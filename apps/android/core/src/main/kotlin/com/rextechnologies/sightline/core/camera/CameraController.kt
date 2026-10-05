@@ -68,6 +68,8 @@ class CameraController(
     private val timing: ControllerTiming = ControllerTiming.Default,
     private val sessionTiming: CameraSessionTiming = CameraSessionTiming.Default,
     private val timeSource: TimeSource = TimeSource.Monotonic,
+    /** Whether a lost camera is tried again, read each time one is lost: the person's setting. */
+    private val reconnects: () -> Boolean = { true },
 ) {
     private val mutableState = MutableStateFlow(CameraState())
     private val mutableFrames = MutableStateFlow<LiveFrame?>(null)
@@ -161,7 +163,10 @@ class CameraController(
         val starting = !state.value.isRecording
         return perform(if (starting) Task.StartingRecording else Task.StoppingRecording) { connected ->
             if (starting) {
+                // A recording is video, whichever button started it: the notification's and Sentry's can
+                // start one from photo mode, and the app must not go on calling it photo mode.
                 enterMode(connected, CameraMode.Record)
+                mutableState.update { it.copy(mode = CaptureMode.Video) }
             }
 
             ask(connected) { it.toggleRecording() }
@@ -253,8 +258,15 @@ class CameraController(
     /**
      * Copies [files] off the card into [sink], one after another, each published only once it is
      * whole. A file that fails is marked and the rest still copied, unless the camera itself was lost.
+     *
+     * @param deleteAfter Whether each file safely on the phone is then deleted from the card. Only a
+     *   file that was published is deleted; one that failed stays on the card.
      */
-    fun download(files: List<CameraFile>, sink: MediaSink): Job? = perform(Task.Copying) { connected ->
+    fun download(
+        files: List<CameraFile>,
+        sink: MediaSink,
+        deleteAfter: Boolean = false,
+    ): Job? = perform(Task.Copying) { connected ->
         refuseWhileRecording("Stop recording to copy from the card.")
         updateTransfers(files.associateWith { Transfer.Queued })
         try {
@@ -262,12 +274,39 @@ class CameraController(
                 for (file in files) {
                     copy(connected, file, sink)
                 }
+
+                if (deleteAfter) {
+                    deleteCopied(connected, files)
+                }
             }
         } finally {
             // Whatever never started, because the copy was cancelled or the camera lost, says so.
             updateTransfers(
                 state.value.library.transfers.filterValues { it == Transfer.Queued || it is Transfer.Copying }
                     .mapValues { Transfer.Failed("Not copied: the copy was stopped.") },
+            )
+        }
+    }
+
+    private suspend fun deleteCopied(connected: Connected, files: List<CameraFile>) {
+        val saved = files.filter { state.value.library.transfers[it] is Transfer.Saved }
+        if (saved.isEmpty()) {
+            return
+        }
+
+        // Highest index first, as for any delete, so a renumbering camera cannot shift a file still to go.
+        for (file in saved.sortedByDescending { it.index }) {
+            ask(connected) { it.deleteFile(file.index) }
+        }
+
+        val remaining = askAtLength(connected) { it.getFileList() }
+        mutableState.update { state ->
+            val library = state.library
+            state.copy(
+                library = library.copy(
+                    files = remaining,
+                    thumbnails = library.thumbnails.filterKeys { it in remaining },
+                ),
             )
         }
     }
@@ -316,7 +355,9 @@ class CameraController(
                 }
 
                 attempt++
-                mutableState.update { it.copy(connection = Connection.Reconnecting(attempt, problem)) }
+                mutableState.update {
+                    it.copy(connection = Connection.Reconnecting(attempt, timing.reconnectAttempts, problem))
+                }
                 delay(timing.reconnectDelay * attempt)
             } else {
                 mutableState.update { it.copy(connection = Connection.Joining(network)) }
@@ -336,6 +377,11 @@ class CameraController(
                 }
 
                 is Attempt.Dropped -> {
+                    if (!reconnects()) {
+                        mutableState.update { it.copy(connection = Connection.Failed(outcome.problem)) }
+                        return
+                    }
+
                     // Once the camera's name is known, ask for exactly it, which Android can grant with
                     // no dialog in the way of a reconnect.
                     network = state.value.cameraName?.let(network::exactly) ?: network
@@ -387,11 +433,14 @@ class CameraController(
                 current = null
                 withContext(NonCancellable) {
                     // The stream first, while its RTSP session can still be ended politely. Then the
-                    // control channel, so an operation still waiting on the camera fails at once
-                    // rather than waiting out its deadline, and then the operations themselves.
+                    // operations are cancelled, so one waiting on the camera ends as cancelled rather
+                    // than as a camera that failed; then the control channel closes, which ends any read
+                    // that ignored the cancelling; and only then are the operations waited for.
                     stopLive()
+                    val operations = connected.work.coroutineContext.job
+                    operations.cancel()
                     session.close()
-                    connected.work.coroutineContext.job.cancelAndJoin()
+                    operations.join()
                 }
             }
         } finally {
@@ -484,12 +533,17 @@ class CameraController(
             return null
         }
 
-        if (state.value.task != null) {
+        // Checked and marked in one step, so a second press from another thread cannot slip in between.
+        var claimed = false
+        mutableState.update {
+            claimed = it.task == null
+            if (claimed) it.copy(task = task) else it
+        }
+        if (!claimed) {
             // Something is already in progress; the screens disable what would clash with it.
             return null
         }
 
-        mutableState.update { it.copy(task = task) }
         val job = connected.work.launch {
             try {
                 operations.withLock { operation(connected) }
