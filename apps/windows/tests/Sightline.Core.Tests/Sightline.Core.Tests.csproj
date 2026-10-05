@@ -17,6 +17,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Sightline.Core/Sightline.Core.csproj" />
     <ProjectReference Include="../../../../protocol/dotnet/Sightline.Testing/Sightline.Testing.csproj" />
+    <ProjectReference Include="../Sightline.Core.Testing/Sightline.Core.Testing.csproj" />
   </ItemGroup>
 
   <ItemGroup>

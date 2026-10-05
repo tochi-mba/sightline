@@ -1,6 +1,5 @@
 using Sightline.Core.Camera;
-using Sightline.Protocol;
-using Sightline.Protocol.GpSock;
+using Sightline.Core.Testing;
 using Sightline.Testing;
 
 namespace Sightline.Core.Tests.Camera;
@@ -28,7 +27,7 @@ internal sealed class ControllerHarness : IAsyncDisposable
 
     public ControllerHarness(bool reconnects = true)
     {
-        Link = new FakeLink(this);
+        Link = new FakeLink(ReferenceCamera.Fake());
         Controller = new CameraController(Link, Quick, QuickStream, () => reconnects);
         Controller.StateChanged += state =>
         {
@@ -39,12 +38,16 @@ internal sealed class ControllerHarness : IAsyncDisposable
         };
     }
 
-    public FakeCamera Control { get; } = new() { MenuXml = File.ReadAllText(Path.Combine("golden", "menu", "reference-camera.xml")) };
+    public FakeCamera Control => Link.Control;
 
-    public List<FakeRtspCamera> Streams { get; } = [];
+    public List<FakeRtspCamera> Streams => Link.Streams;
 
     /// <summary>How each new stream is set up before the controller opens it.</summary>
-    public Action<FakeRtspCamera> Stream { get; set; } = s => s.Frames.Add(FakeRtspCamera.Jpeg(600));
+    public Action<FakeRtspCamera> Stream
+    {
+        get => Link.Stream;
+        set => Link.Stream = value;
+    }
 
     public FakeLink Link { get; }
 
@@ -105,147 +108,4 @@ internal sealed class ControllerHarness : IAsyncDisposable
     }
 
     public async ValueTask DisposeAsync() => await Controller.DisposeAsync();
-
-    /// <summary>The camera's network, which joins unless told to fail.</summary>
-    internal sealed class FakeLink(ControllerHarness harness) : ICameraLink
-    {
-        public List<bool> Requests { get; } = [];
-
-        public Queue<Exception> Failures { get; } = new();
-
-        public List<FakeLease> Leases { get; } = [];
-
-        /// <summary>When set, a join waits until it is given up.</summary>
-        public bool Waits { get; set; }
-
-        /// <summary>When set, the control port is this rather than the fake camera.</summary>
-        public Func<ICameraTransport>? ControlTransport { get; set; }
-
-        public FakeLease Lease => Leases[^1];
-
-        public async Task<ICameraLease> JoinAsync(bool reconnecting, CancellationToken cancellationToken)
-        {
-            Requests.Add(reconnecting);
-            if (Waits)
-            {
-                await Task.Delay(Timeout.Infinite, cancellationToken);
-            }
-
-            if (Failures.TryDequeue(out var failure))
-            {
-                throw failure;
-            }
-
-            var lease = new FakeLease(harness);
-            Leases.Add(lease);
-            return lease;
-        }
-    }
-
-    internal sealed class FakeLease(ControllerHarness harness) : ICameraLease
-    {
-        private readonly TaskCompletionSource lost = new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public bool Disposed { get; private set; }
-
-        public Task Lost => lost.Task;
-
-        /// <summary>Has the system lose the camera's network.</summary>
-        public void Lose() => lost.TrySetResult();
-
-        public ICameraTransport Transport(int port)
-        {
-            if (port == GpSockConnection.Port)
-            {
-                return harness.Link.ControlTransport?.Invoke() ?? harness.Control;
-            }
-
-            var stream = new FakeRtspCamera { StreamStarted = () => harness.Control.IsStreaming };
-            harness.Stream(stream);
-            lock (harness.Streams)
-            {
-                harness.Streams.Add(stream);
-            }
-
-            return stream;
-        }
-
-        public ValueTask DisposeAsync()
-        {
-            Disposed = true;
-            return ValueTask.CompletedTask;
-        }
-    }
-}
-
-/// <summary>A gallery in memory that can be told to fail.</summary>
-internal sealed class FakeSink : IMediaSink
-{
-    public List<(CameraFile File, MediaKind Kind)> Created { get; } = [];
-
-    public Dictionary<string, byte[]> Published { get; } = [];
-
-    public List<CameraFile> Discarded { get; } = [];
-
-    /// <summary>When set, creating a file fails as a full disk does.</summary>
-    public bool Full { get; set; }
-
-    /// <summary>When set, the last step, giving the file its name, fails.</summary>
-    public bool PublishFails { get; set; }
-
-    /// <summary>When set, Windows denies the last step, as it does a folder the person may not write to.</summary>
-    public bool PublishDenied { get; set; }
-
-    /// <summary>When set, throwing a partial file away fails too.</summary>
-    public bool DiscardFails { get; set; }
-
-    /// <summary>Runs as each file is created: the moment a copy is known to be under way.</summary>
-    public Action OnCreate { get; set; } = () => { };
-
-    public IPendingMedia Create(CameraFile file, MediaKind kind)
-    {
-        if (Full)
-        {
-            throw new IOException("There is not enough space on the disk.");
-        }
-
-        OnCreate();
-        Created.Add((file, kind));
-        return new Pending(this, file, kind);
-    }
-
-    private sealed class Pending(FakeSink sink, CameraFile file, MediaKind kind) : IPendingMedia, IDisposable
-    {
-        private readonly MemoryStream bytes = new();
-
-        public Stream Output => bytes;
-
-        public string Publish()
-        {
-            if (sink.PublishFails)
-            {
-                throw new IOException("The file is in use by another process.");
-            }
-
-            if (sink.PublishDenied)
-            {
-                throw new UnauthorizedAccessException("Access to the path is denied.");
-            }
-
-            var name = $"Downloads/{file.DisplayName}{kind.Extension()}";
-            sink.Published[name] = bytes.ToArray();
-            return name;
-        }
-
-        public void Discard()
-        {
-            sink.Discarded.Add(file);
-            if (sink.DiscardFails)
-            {
-                throw new UnauthorizedAccessException("Access to the path is denied.");
-            }
-        }
-
-        public void Dispose() => bytes.Dispose();
-    }
 }

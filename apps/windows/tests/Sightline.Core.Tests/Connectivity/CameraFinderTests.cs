@@ -1,6 +1,7 @@
 using Shouldly;
 using Sightline.Core.Camera;
 using Sightline.Core.Connectivity;
+using Sightline.Core.Testing;
 using Xunit;
 
 namespace Sightline.Core.Tests.Connectivity;

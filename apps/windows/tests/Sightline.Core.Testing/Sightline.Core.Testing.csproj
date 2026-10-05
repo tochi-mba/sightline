@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Fakes of what the Windows core stands on: the camera's network, Wi-Fi adapters, and a gallery that
+    can be told to fail. Shared by the core's tests and the app's. Test support only; never shipped.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Sightline.Core.Testing</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Sightline.Core/Sightline.Core.csproj" />
+    <ProjectReference Include="../../../../protocol/dotnet/Sightline.Testing/Sightline.Testing.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The reference camera's own menu, so every fake camera describes itself as the real one does. -->
+    <EmbeddedResource Include="../../../../protocol/golden/menu/reference-camera.xml" LogicalName="reference-camera.xml" />
+  </ItemGroup>
+
+</Project>

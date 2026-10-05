@@ -1,5 +1,6 @@
 using Shouldly;
 using Sightline.Core.Camera;
+using Sightline.Core.Testing;
 using Sightline.Protocol.GpSock;
 using Sightline.Testing;
 using Xunit;

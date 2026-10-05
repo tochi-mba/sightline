@@ -2,10 +2,10 @@ using System.Net;
 using Sightline.Core.Connectivity;
 using ConnectivityWifiAdapter = Sightline.Core.Connectivity.WifiAdapter;
 
-namespace Sightline.Core.Tests.Connectivity;
+namespace Sightline.Core.Testing;
 
 /// <summary>Wi-Fi that needs no adapter: it records what it was asked and answers as scripted.</summary>
-internal sealed class FakeWlan : IWlanClient
+public sealed class FakeWlan : IWlanClient
 {
     public List<ConnectivityWifiAdapter> AdapterList { get; } = [];
 
@@ -58,7 +58,7 @@ internal sealed class FakeWlan : IWlanClient
 }
 
 /// <summary>Addresses that appear when the test says, as DHCP's do.</summary>
-internal sealed class FakeNetwork : INetworkState
+public sealed class FakeNetwork : INetworkState
 {
     public Dictionary<Guid, List<IPAddress>> Addresses { get; } = [];
 
@@ -75,7 +75,8 @@ internal sealed class FakeNetwork : INetworkState
     public string? InternetPathOtherThan(Guid adapter) => InternetElsewhere.GetValueOrDefault(adapter);
 }
 
-internal static class Adapters
+/// <summary>The reference PC's two Wi-Fi adapters: the spare dongle and the built-in one.</summary>
+public static class Adapters
 {
     public static readonly Guid DongleId = Guid.Parse("0d39fa57-97fd-49d4-85e8-d51333000001");
     public static readonly Guid BuiltInId = Guid.Parse("98d9443b-14e2-43cc-ba63-f0bad1000002");

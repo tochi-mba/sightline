@@ -1,9 +1,9 @@
-using System.Net;
 using Shouldly;
 using Sightline.Core.Camera;
 using Sightline.Core.Connectivity;
-using Sightline.Core.Tests.Connectivity;
+using Sightline.Core.Testing;
 using Sightline.Protocol;
+using System.Net;
 using Xunit;
 
 namespace Sightline.Core.Tests.Camera;

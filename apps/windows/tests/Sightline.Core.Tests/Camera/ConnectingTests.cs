@@ -1,8 +1,9 @@
 using Shouldly;
 using Sightline.Core.Camera;
 using Sightline.Core.Connectivity;
-using Sightline.Protocol;
+using Sightline.Core.Testing;
 using Sightline.Protocol.GpSock;
+using Sightline.Protocol;
 using Xunit;
 
 namespace Sightline.Core.Tests.Camera;
@@ -262,7 +263,7 @@ public sealed class ConnectingTests
         Should.Throw<ArgumentNullException>(() => new CameraController(null!));
         ControllerTiming.Default.ReconnectAttempts.ShouldBe(5);
         ControllerTiming.Default.Answer.ShouldBe(TimeSpan.FromSeconds(10));
-        new CameraController(new ControllerHarness.FakeLink(new ControllerHarness())).State.ShouldBe(CameraState.Initial);
+        new CameraController(new FakeLink(ReferenceCamera.Fake())).State.ShouldBe(CameraState.Initial);
     }
 
     /// <summary>A control port that accepts the connection attempt and never completes it.</summary>

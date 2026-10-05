@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/Sightline.App/Sightline.App.csproj" />
+    <ProjectReference Include="../Sightline.Core.Testing/Sightline.Core.Testing.csproj" />
   </ItemGroup>
 
 </Project>

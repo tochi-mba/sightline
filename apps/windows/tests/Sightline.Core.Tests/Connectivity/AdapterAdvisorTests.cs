@@ -1,8 +1,8 @@
+using ConnectivityAdapter = Sightline.Core.Connectivity.WifiAdapter;
 using Shouldly;
 using Sightline.Core.Connectivity;
-using ConnectivityAdapter = Sightline.Core.Connectivity.WifiAdapter;
 using Xunit;
-using static Sightline.Core.Tests.Connectivity.Adapters;
+using static Sightline.Core.Testing.Adapters;
 
 namespace Sightline.Core.Tests.Connectivity;
 
