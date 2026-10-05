@@ -50,6 +50,8 @@ compose-ui-test-manifest = { module = "androidx.compose.ui:ui-test-manifest" }
 
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+# Virtual time: a test of an eight-second stall or a two-second poll runs in milliseconds.
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 
 junit = { module = "junit:junit", version.ref = "junit" }
 # The Android modules' tests run on the JVM, against a real Android framework, through Robolectric.
