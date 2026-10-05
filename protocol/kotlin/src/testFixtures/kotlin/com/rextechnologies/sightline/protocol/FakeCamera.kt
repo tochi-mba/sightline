@@ -73,6 +73,9 @@ class FakeCamera : CameraTransport {
     /** Whether the camera is recording to its card; set it as the camera's own button would. */
     var isRecording = false
 
+    /** The thumbnail sent for a file: a token by default, which only looks like a JPEG to the protocol. */
+    var thumbnailOf: (FakeFile) -> ByteArray = { bytes(0xFF, 0xD8, it.index, 0xFF, 0xD9) }
+
     /** Whether the media flow has been started. */
     var isStreaming = false
 
@@ -316,7 +319,7 @@ class FakeCamera : CameraTransport {
                 if (pictured == null) {
                     nak(command, NakCode.InvalidCommand)
                 } else {
-                    ack(command, bytes(0xFF, 0xD8, pictured.index, 0xFF, 0xD9))
+                    ack(command, thumbnailOf(pictured))
                     ack(command)
                 }
             }
