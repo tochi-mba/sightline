@@ -95,6 +95,20 @@ class TcpCameraTransportTest {
     }
 
     @Test
+    fun `it connects the socket its factory makes`(): Unit = runBlocking {
+        // A phone's camera network hands out its own sockets, and a socket made any other way would
+        // leave over mobile data instead of reaching the camera.
+        val made = mutableListOf<Socket>()
+        val transport = TcpCameraTransport(cameraAddress, newSocket = { Socket().also(made::add) })
+
+        transport.connect()
+
+        answer().use { assertTrue(made.single().isConnected) }
+        transport.close()
+        assertTrue(made.single().isClosed)
+    }
+
+    @Test
     fun `an address this machine does not have is refused rather than routed round`(): Unit = runBlocking {
         // 192.0.2.1 is reserved for documentation, so no interface has it: binding fails locally,
         // which is the failure a phone that has left the camera's Wi-Fi should see.

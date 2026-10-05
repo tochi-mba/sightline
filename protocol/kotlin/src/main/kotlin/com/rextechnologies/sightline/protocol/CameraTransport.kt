@@ -43,10 +43,14 @@ interface CameraTransport : Closeable {
  * @param bindTo The local address to send from. Supplying it is what keeps the traffic on the adapter
  *   the camera is actually on when the machine has another network; leaving it null lets the routing
  *   table decide, which is right only when nothing else could be chosen.
+ * @param newSocket Makes the unconnected socket. On a phone this is the camera network's own socket
+ *   factory, whose sockets travel over the camera's Wi-Fi whatever the default route is: that is how
+ *   the phone reaches the camera while mobile data carries everything else.
  */
 class TcpCameraTransport(
     private val endpoint: InetSocketAddress,
     private val bindTo: InetAddress? = null,
+    private val newSocket: () -> Socket = ::Socket,
 ) : CameraTransport {
     @Volatile
     private var socket: Socket? = null
@@ -55,7 +59,7 @@ class TcpCameraTransport(
         get() = socket != null
 
     override suspend fun connect() {
-        val created = Socket()
+        val created = newSocket()
         try {
             if (bindTo != null) {
                 created.bind(InetSocketAddress(bindTo, 0))
