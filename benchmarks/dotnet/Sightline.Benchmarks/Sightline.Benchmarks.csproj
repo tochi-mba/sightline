@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Release only: the solution leaves this project out of its Debug configuration, because a
+       Debug build times code the JIT was told not to optimise, which says nothing about the app.
+       BenchmarkDotNet refuses to measure one anyway. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Sightline.Benchmarks</RootNamespace>
+    <Description>Benchmarks of the protocol and core hot paths, to measure every optimisation against a recorded baseline.</Description>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+    <PackageReference Include="SkiaSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../protocol/dotnet/Sightline.Protocol/Sightline.Protocol.csproj" />
+    <ProjectReference Include="../../../apps/windows/src/Sightline.Core/Sightline.Core.csproj" />
+  </ItemGroup>
+
+  <!-- The reference camera's own answers, compiled in so that every toolchain BenchmarkDotNet
+       builds with finds them without depending on files being copied beside the program. -->
+  <ItemGroup>
+    <EmbeddedResource Include="../../../protocol/golden/menu/reference-camera.xml" LogicalName="reference-camera.xml" />
+    <EmbeddedResource Include="../../../protocol/golden/gpsock/device-status-16byte.hex" LogicalName="device-status-16byte.hex" />
+  </ItemGroup>
+
+</Project>
