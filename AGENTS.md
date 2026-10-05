@@ -35,3 +35,5 @@ protocol as measured on real hardware.
 | `dotnet build Sightline.slnx` | Builds the protocol, core and command line. |
 | `dotnet test Sightline.slnx` | Runs every .NET test. |
 | `./gradlew :protocol:check` | Lints and tests the Kotlin protocol, and holds it to 100% line and branch coverage. |
+| `./tools/scripts/bench.ps1` | Runs the benchmark suite and compares it with the baseline; `-Record` replaces the baseline. See `docs/PERFORMANCE.md`. |
+| `python -m unittest discover tools/scripts/tests` | Tests the repository's own scripts: the site checker and the benchmark comparison. |

@@ -1,0 +1,18 @@
+{
+  "recorded": "2026-10-05T12:31:24+01:00",
+  "commit": "fd98b6a56eaa7eb450381e1a22f1184c17a98f55",
+  "provisional": true,
+  "filter": "*",
+  "machine": {
+    "cpu": "Intel(R) Core(TM) i7-10510U CPU @ 1.80GHz",
+    "cores": 4,
+    "threads": 8,
+    "memoryGB": 31.8,
+    "os": "Microsoft Windows 11 Pro 10.0.26200",
+    "powerPlan": "Balanced"
+  },
+  "dotnet": {
+    "sdk": "10.0.401",
+    "runtime": "10.0.12"
+  }
+}
