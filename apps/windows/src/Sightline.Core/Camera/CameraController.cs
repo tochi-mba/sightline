@@ -756,7 +756,7 @@ public sealed class CameraController : IAsyncDisposable
                 await saved.Output.DisposeAsync().ConfigureAwait(false);
                 where = saved.Publish();
             }
-            catch (IOException failure)
+            catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
             {
                 throw new SaveFailureException(failure.Message, failure);
             }

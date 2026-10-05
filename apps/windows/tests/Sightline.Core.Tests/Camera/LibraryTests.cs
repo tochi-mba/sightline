@@ -212,6 +212,10 @@ public sealed class LibraryTests
         camera.State.Library.Transfers[files[0]].ShouldBe(new Transfer.Failed("This PC could not save it: The file is in use by another process."));
         sink.Discarded.ShouldBe([files[0]]);
         camera.State.IsConnected.ShouldBeTrue();
+
+        await camera.Controller.Download([files[0]], new FakeSink { PublishDenied = true })!;
+        camera.State.Library.Transfers[files[0]].ShouldBe(new Transfer.Failed("This PC could not save it: Access to the path is denied."));
+        camera.State.IsConnected.ShouldBeTrue();
     }
 
     [Fact]

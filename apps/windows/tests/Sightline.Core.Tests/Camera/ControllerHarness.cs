@@ -193,6 +193,9 @@ internal sealed class FakeSink : IMediaSink
     /// <summary>When set, the last step, giving the file its name, fails.</summary>
     public bool PublishFails { get; set; }
 
+    /// <summary>When set, Windows denies the last step, as it does a folder the person may not write to.</summary>
+    public bool PublishDenied { get; set; }
+
     /// <summary>When set, throwing a partial file away fails too.</summary>
     public bool DiscardFails { get; set; }
 
@@ -222,6 +225,11 @@ internal sealed class FakeSink : IMediaSink
             if (sink.PublishFails)
             {
                 throw new IOException("The file is in use by another process.");
+            }
+
+            if (sink.PublishDenied)
+            {
+                throw new UnauthorizedAccessException("Access to the path is denied.");
             }
 
             var name = $"Downloads/{file.DisplayName}{kind.Extension()}";

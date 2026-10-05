@@ -55,11 +55,15 @@ public sealed class SniffingStreamTests : IDisposable
     {
         using var refused = new SniffingStream(_ => throw new IOException("The disk is full."));
         Should.Throw<SaveFailureException>(() => refused.Write(Jpeg)).Message.ShouldBe("The disk is full.");
+        using var denied = new SniffingStream(_ => throw new UnauthorizedAccessException("Access to the path is denied."));
+        Should.Throw<SaveFailureException>(() => denied.Write(Jpeg)).InnerException.ShouldBeOfType<UnauthorizedAccessException>();
 
         using var stream = Sniffing();
         stream.Write(Jpeg);
         destination.Fails = true;
         Should.Throw<SaveFailureException>(() => stream.Write(Jpeg)).InnerException.ShouldBeOfType<IOException>();
+        destination.Denies = true;
+        Should.Throw<SaveFailureException>(() => stream.Write(Jpeg)).InnerException.ShouldBeOfType<UnauthorizedAccessException>();
     }
 
     [Fact]
@@ -87,6 +91,8 @@ public sealed class SniffingStreamTests : IDisposable
     {
         public bool Fails { get; set; }
 
+        public bool Denies { get; set; }
+
         public int Flushes { get; private set; }
 
         // MemoryStream's span overload calls the array one for a derived type, so only the array one checks.
@@ -94,6 +100,11 @@ public sealed class SniffingStreamTests : IDisposable
 
         public override void Write(byte[] buffer, int offset, int count)
         {
+            if (Denies)
+            {
+                throw new UnauthorizedAccessException("Access to the path is denied.");
+            }
+
             if (Fails)
             {
                 throw new IOException("The device is not ready.");

@@ -74,8 +74,9 @@ public interface IPendingMedia
 }
 
 /// <summary>
-/// The PC could not save a file: its disk refused it or is full. Kept apart from the camera's failures,
-/// which are <see cref="IOException"/>s too, because a full disk is no reason to think the camera was lost.
+/// The PC could not save a file: its disk is full, or Windows denied the folder. Kept apart from the
+/// camera's failures, which are <see cref="IOException"/>s too, because a full disk is no reason to think
+/// the camera was lost.
 /// </summary>
 public sealed class SaveFailureException : Exception
 {
@@ -132,7 +133,7 @@ internal sealed class SniffingStream(Func<MediaKind, Stream> open) : Stream
             {
                 opened.Write(buffer);
             }
-            catch (IOException failure)
+            catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
             {
                 throw new SaveFailureException(failure.Message, failure);
             }
@@ -192,7 +193,7 @@ internal sealed class SniffingStream(Func<MediaKind, Stream> open) : Stream
         {
             return write();
         }
-        catch (IOException failure)
+        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
         {
             throw new SaveFailureException(failure.Message, failure);
         }
