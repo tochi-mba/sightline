@@ -91,14 +91,21 @@ public abstract record LiveView
     public sealed record Playing(double FramesPerSecond) : LiveView;
 
     /// <summary>Stopped while the camera's card is read, which the camera cannot do while streaming.</summary>
+    /// <remarks>Reading the card ends the camera's live picture, so what follows is <see cref="Unavailable"/>.</remarks>
     public sealed record Paused : LiveView
     {
         /// <summary>The one value.</summary>
         public static Paused Instance { get; } = new();
     }
 
-    /// <summary>The stream failed for <paramref name="Reason"/>; it is started again shortly.</summary>
+    /// <summary>The stream went quiet for <paramref name="Reason"/>; it is still open, and watched again shortly.</summary>
     public sealed record Interrupted(string Reason) : LiveView;
+
+    /// <summary>
+    /// The camera will not give a live picture again until it is switched off and on, for <paramref name="Reason"/>.
+    /// Nothing is tried again: the camera answers one stream per power-on.
+    /// </summary>
+    public sealed record Unavailable(string Reason) : LiveView;
 }
 
 /// <summary>One picture from the live view. <paramref name="Number"/> counts up, so the same bytes twice are still two frames.</summary>
@@ -240,4 +247,10 @@ public sealed record CameraState(
 
     /// <summary>Whether the camera is recording to its card.</summary>
     public bool IsRecording => Status?.IsRecording == true;
+
+    /// <summary>
+    /// Whether this connection has the camera's live picture, so reading the card would cost it until the
+    /// camera is switched off and on. A screen that reads the card asks first when this is true.
+    /// </summary>
+    public bool HoldsLivePicture { get; init; }
 }

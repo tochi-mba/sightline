@@ -25,9 +25,10 @@ public static class CameraWords
         return (camera.Connection, camera.Live) switch
         {
             (Camera.Connection.Reconnecting r, _) => $"Reconnecting to the camera, attempt {r.Attempt} of {r.Of}",
-            (_, LiveView.Interrupted) => "The picture stopped. Starting it again.",
+            (_, LiveView.Interrupted) => "The camera stopped sending its picture. Waiting for it.",
             (_, LiveView.Starting) => "Starting the picture",
-            (_, LiveView.Paused) => "Paused while the card is read",
+            (_, LiveView.Paused) => "The card is being read",
+            (_, LiveView.Unavailable) => "No live picture until the camera is switched off and on. It gives one each time it starts.",
             _ => null,
         };
     }

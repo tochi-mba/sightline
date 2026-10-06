@@ -72,6 +72,11 @@ internal static class Program
             Error(exception.Message);
             return ExitCode.Refused;
         }
+        catch (LivePictureUnavailableException exception)
+        {
+            Error(exception.Message);
+            return ExitCode.Refused;
+        }
         catch (TimeoutException exception)
         {
             Error(exception.Message);
@@ -344,7 +349,9 @@ internal static class Program
                 files                             How many files are on the card
                 photo                             Take a photo onto the camera's card
                 record                            Start or stop recording to the card
-                snapshot [--out FILE]             Save one picture from the live view
+                snapshot [--out FILE]             Save one picture from the live view. The camera gives its
+                                                  live picture once each time it is switched on, and reading
+                                                  its card ends it.
 
                 --version  --help
 

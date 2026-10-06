@@ -9,38 +9,45 @@ using Xunit;
 
 namespace Sightline.Core.Tests;
 
-/// <summary>One conversation with one camera, against fakes of both its control channel and its stream.</summary>
+/// <summary>
+/// One conversation with one camera, against fakes of both its control channel and its stream. The
+/// session may open one stream connection: a second one fails the test, as on the reference camera
+/// it would never be answered.
+/// </summary>
 public sealed class CameraSessionTests : IAsyncDisposable
 {
-    private static readonly CameraSessionTiming Quick = new(TimeSpan.FromMilliseconds(300), TimeSpan.FromMilliseconds(300), TimeSpan.FromMilliseconds(300));
+    private static readonly CameraSessionTiming Quick = new(TimeSpan.FromMilliseconds(300), TimeSpan.FromMilliseconds(300));
 
     private readonly FakeCamera control = new();
-    private readonly List<FakeRtspCamera> streams = [];
+    private readonly FakeRtspCamera stream = new();
     private readonly List<string> trace = [];
+    private int streamsOpened;
 
-    /// <summary>The next RTSP connection the session opens; each stream gets a fresh one, as on the wire.</summary>
-    private FakeRtspCamera NextStream(Action<FakeRtspCamera>? configure = null)
-    {
-        var stream = new FakeRtspCamera { StreamStarted = () => control.IsStreaming };
-        configure?.Invoke(stream);
-        streams.Add(stream);
-        return stream;
-    }
+    public CameraSessionTests() => stream.StreamStarted = () => control.IsStreaming;
 
     private async Task<CameraSession> OpenAsync()
     {
-        var next = 0;
-        var session = await CameraSession.OpenAsync(
-            port => port == GpSockConnection.Port ? control : streams[next++], "192.168.100.1", Quick);
+        var session = await CameraSession.OpenAsync(Transport, "192.168.100.1", Quick);
         session.Trace = trace.Add;
         return session;
+    }
+
+    private ICameraTransport Transport(int port)
+    {
+        if (port == GpSockConnection.Port)
+        {
+            return control;
+        }
+
+        Interlocked.Increment(ref streamsOpened).ShouldBe(1, "a second stream connection is never answered by the camera");
+        return stream;
     }
 
     [Fact]
     public async Task A_picture_is_grabbed_after_starting_the_stream_on_the_control_channel()
     {
         var jpeg = FakeRtspCamera.Jpeg(900);
-        var stream = NextStream(s => s.Frames.Add(jpeg));
+        stream.Frames.Add(jpeg);
         await using var session = await OpenAsync();
 
         var frame = await session.GrabFrameAsync(TimeSpan.FromSeconds(5));
@@ -48,54 +55,98 @@ public sealed class CameraSessionTests : IAsyncDisposable
         frame.Jpeg.ShouldBe(jpeg);
         frame.Width.ShouldBe(640);
         control.IsStreaming.ShouldBeTrue();
-        stream.Verbs.ShouldBe(["DESCRIBE", "SETUP", "PLAY", "TEARDOWN"]);
+        stream.Verbs.ShouldBe(["DESCRIBE", "SETUP", "PLAY"]);
         trace.ShouldContain("control: RestartStreaming acknowledged");
         trace.ShouldContain(line => line.StartsWith("rtsp: first stream bytes arrived: 80", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task Frames_keep_coming_until_the_consumer_stops_and_the_session_is_then_torn_down()
+    public async Task The_stream_is_opened_once_and_kept_however_many_times_pictures_are_wanted()
     {
-        var stream = NextStream(s => s.Frames.AddRange([FakeRtspCamera.Jpeg(100), FakeRtspCamera.Jpeg(200), FakeRtspCamera.Jpeg(300)]));
+        stream.Pace = TimeSpan.FromMilliseconds(30);
+        stream.Frames.AddRange(Enumerable.Range(1, 20).Select(n => FakeRtspCamera.Jpeg(100 + n)));
         await using var session = await OpenAsync();
-        var sizes = new List<int>();
+        session.HoldsLivePicture.ShouldBeFalse();
 
-        await foreach (var frame in session.StreamFramesAsync())
+        await session.GrabFrameAsync(TimeSpan.FromSeconds(5));
+        await foreach (var _ in session.StreamFramesAsync())
         {
-            sizes.Add(frame.Jpeg.Length);
-            if (sizes.Count == 2)
-            {
-                break;
-            }
+            break;
         }
 
-        sizes.ShouldBe([100, 200]);
-        stream.Verbs[^1].ShouldBe("TEARDOWN");
+        await session.GrabFrameAsync(TimeSpan.FromSeconds(5));
+
+        streamsOpened.ShouldBe(1);
+        stream.Verbs.ShouldBe(["DESCRIBE", "SETUP", "PLAY"]);
+        stream.IsConnected.ShouldBeTrue();
+        session.HoldsLivePicture.ShouldBeTrue();
     }
 
     [Fact]
-    public async Task Cancelling_between_frames_ends_the_stream_quietly_and_still_tears_it_down()
+    public async Task Two_watchers_at_once_share_the_one_stream()
     {
-        var stream = NextStream(s => s.Frames.AddRange([FakeRtspCamera.Jpeg(100), FakeRtspCamera.Jpeg(200)]));
+        stream.Pace = TimeSpan.FromMilliseconds(30);
+        stream.Frames.AddRange(Enumerable.Range(1, 30).Select(n => FakeRtspCamera.Jpeg(100 + n)));
+        await using var session = await OpenAsync();
+
+        async Task<int> Watch()
+        {
+            var count = 0;
+            await foreach (var _ in session.StreamFramesAsync())
+            {
+                if (++count == 3)
+                {
+                    break;
+                }
+            }
+
+            return count;
+        }
+
+        (await Task.WhenAll(Watch(), Watch())).ShouldBe([3, 3]);
+        streamsOpened.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Someone_who_comes_back_to_the_picture_sees_the_latest_one_at_once()
+    {
+        // Every picture arrives before anybody is watching, and the camera then goes quiet.
+        var last = FakeRtspCamera.Jpeg(333);
+        stream.Frames.AddRange([FakeRtspCamera.Jpeg(111), FakeRtspCamera.Jpeg(222), last]);
+        await using var session = await OpenAsync();
+        await session.GrabFrameAsync(TimeSpan.FromSeconds(5));
+
+        (await session.GrabFrameAsync(TimeSpan.FromSeconds(5))).Jpeg.ShouldBe(last);
+    }
+
+    [Fact]
+    public async Task Cancelling_a_watcher_stops_its_pictures_and_leaves_the_stream_open()
+    {
+        stream.Pace = TimeSpan.FromMilliseconds(30);
+        stream.Frames.AddRange(Enumerable.Range(1, 10).Select(n => FakeRtspCamera.Jpeg(100 + n)));
         await using var session = await OpenAsync();
         using var cancel = new CancellationTokenSource();
         var count = 0;
 
-        await foreach (var _ in session.StreamFramesAsync(cancel.Token))
+        await Should.ThrowAsync<OperationCanceledException>(async () =>
         {
-            count++;
-            await cancel.CancelAsync();
-        }
+            await foreach (var _ in session.StreamFramesAsync(cancel.Token))
+            {
+                count++;
+                await cancel.CancelAsync();
+            }
+        });
 
         count.ShouldBe(1);
-        stream.Verbs[^1].ShouldBe("TEARDOWN");
+        stream.IsConnected.ShouldBeTrue();
+        session.HoldsLivePicture.ShouldBeTrue();
     }
 
     [Fact]
     public async Task A_frame_that_is_not_a_whole_jpeg_is_skipped_and_said_so()
     {
         var good = FakeRtspCamera.Jpeg(400);
-        NextStream(s => s.Frames.AddRange([[1, 2, 3, 4, 5, 6], good]));
+        stream.Frames.AddRange([[1, 2, 3, 4, 5, 6], good]);
         await using var session = await OpenAsync();
 
         (await session.GrabFrameAsync(TimeSpan.FromSeconds(5))).Jpeg.ShouldBe(good);
@@ -103,39 +154,86 @@ public sealed class CameraSessionTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task A_camera_that_closes_the_stream_before_any_picture_is_reported()
+    public async Task A_camera_that_ends_its_stream_has_given_its_picture_for_this_power_on()
     {
-        NextStream(s => s.ClosesAfterFrames = true);
+        stream.Frames.Add(FakeRtspCamera.Jpeg(500));
+        stream.Pace = TimeSpan.FromMilliseconds(100);
         await using var session = await OpenAsync();
+        await foreach (var _ in session.StreamFramesAsync())
+        {
+            // Browse mode, on the real camera.
+            stream.HangUp();
+            break;
+        }
 
-        var failed = await Should.ThrowAsync<RtspException>(() => session.GrabFrameAsync(TimeSpan.FromSeconds(5)));
-
-        failed.Message.ShouldContain("stopped sending before a whole picture arrived");
-        trace.ShouldContain(line => line.StartsWith("rtsp: the camera closed the stream after", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task A_stream_that_goes_quiet_is_called_stopped_rather_than_waited_on()
-    {
-        // Negotiated, PLAY answered, and nothing ever arrives: the commonest broken-camera state.
-        NextStream(s => s.StreamStarted = () => false);
-        await using var session = await OpenAsync();
-
-        var stalled = await Should.ThrowAsync<TimeoutException>(async () =>
+        var gone = await Should.ThrowAsync<LivePictureUnavailableException>(async () =>
         {
             await foreach (var _ in session.StreamFramesAsync())
             {
             }
         });
 
-        stalled.Message.ShouldBe("The camera sent nothing for 0 seconds.");
-        streams[0].Verbs[^1].ShouldBe("TEARDOWN");
+        gone.Message.ShouldBe("The camera ended its live picture. " + LivePictureUnavailableException.Advice);
+        trace.ShouldContain(line => line.StartsWith("rtsp: the camera closed the stream after", StringComparison.Ordinal));
+        session.HoldsLivePicture.ShouldBeFalse();
+        (await Should.ThrowAsync<LivePictureUnavailableException>(() => session.GrabFrameAsync(TimeSpan.FromSeconds(5))))
+            .Message.ShouldBe(gone.Message);
+        streamsOpened.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task A_watcher_waiting_when_the_camera_hangs_up_is_told_at_once()
+    {
+        await using var session = await OpenAsync();
+        stream.StreamStarted = () => false;
+        var waiting = session.GrabFrameAsync(TimeSpan.FromSeconds(30));
+        await EventuallyAsync(() => stream.Verbs.Contains("PLAY"));
+        // Long enough for the grab, which has no picture to take, to be subscribed and waiting.
+        await Task.Delay(200);
+
+        stream.HangUp();
+
+        (await Should.ThrowAsync<LivePictureUnavailableException>(() => waiting))
+            .InnerException.ShouldBeOfType<System.Threading.Channels.ChannelClosedException>();
+    }
+
+    [Fact]
+    public async Task A_stream_that_drops_is_reported_with_why()
+    {
+        stream.BreaksWith = new IOException("An existing connection was forcibly closed.");
+        await using var session = await OpenAsync();
+
+        var lost = await Should.ThrowAsync<LivePictureUnavailableException>(() => session.GrabFrameAsync(TimeSpan.FromSeconds(5)));
+
+        lost.Message.ShouldStartWith("The live picture was lost: An existing connection was forcibly closed.");
+    }
+
+    [Fact]
+    public async Task A_quiet_spell_is_said_and_the_same_stream_is_watched_again()
+    {
+        // Negotiated, PLAY answered, and nothing arrives: the stream stays open, and is waited on again.
+        stream.StreamStarted = () => false;
+        await using var session = await OpenAsync();
+        async Task Watch()
+        {
+            await foreach (var _ in session.StreamFramesAsync())
+            {
+            }
+        }
+
+        var quiet = await Should.ThrowAsync<TimeoutException>(Watch);
+        await Should.ThrowAsync<TimeoutException>(Watch);
+
+        quiet.Message.ShouldBe("The camera sent nothing for 0 seconds.");
+        session.HoldsLivePicture.ShouldBeTrue();
+        streamsOpened.ShouldBe(1);
+        stream.Verbs.ShouldBe(["DESCRIBE", "SETUP", "PLAY"]);
     }
 
     [Fact]
     public async Task Grabbing_from_a_quiet_stream_times_out_with_a_sentence()
     {
-        NextStream(s => s.StreamStarted = () => false);
+        stream.StreamStarted = () => false;
         await using var session = await OpenAsync();
 
         var timedOut = await Should.ThrowAsync<TimeoutException>(() => session.GrabFrameAsync(TimeSpan.FromMilliseconds(100)));
@@ -146,7 +244,7 @@ public sealed class CameraSessionTests : IAsyncDisposable
     [Fact]
     public async Task Grabbing_stops_when_the_caller_cancels_rather_than_calling_it_a_timeout()
     {
-        NextStream(s => s.StreamStarted = () => false);
+        stream.StreamStarted = () => false;
         await using var session = await OpenAsync();
         using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
@@ -154,62 +252,52 @@ public sealed class CameraSessionTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task A_server_that_never_answers_the_start_is_called_stuck_and_left_without_a_teardown()
+    public async Task A_camera_that_never_answers_the_start_has_given_its_picture_elsewhere_and_is_not_asked_again()
     {
-        // SETUP never came back, so there is no session on the camera to end.
-        var stream = NextStream(s => s.NeverAnswers = "DESCRIBE");
+        // What the reference camera does with any connection after its first since power-on.
+        stream.NeverAnswers = "DESCRIBE";
         await using var session = await OpenAsync();
 
-        var stuck = await Should.ThrowAsync<TimeoutException>(() => session.GrabFrameAsync(TimeSpan.FromSeconds(5)));
+        var stuck = await Should.ThrowAsync<LivePictureUnavailableException>(() => session.GrabFrameAsync(TimeSpan.FromSeconds(5)));
 
-        stuck.InnerException!.Message.ShouldBe("The camera did not start its stream within 0 seconds.");
+        stuck.Message.ShouldBe(
+            "The camera did not start its live picture within 0 seconds, which is what it does once it has given its "
+            + "live picture to an earlier connection. " + LivePictureUnavailableException.Advice);
+        stuck.InnerException.ShouldBeAssignableTo<OperationCanceledException>();
+        await Should.ThrowAsync<LivePictureUnavailableException>(() => session.GrabFrameAsync(TimeSpan.FromSeconds(5)));
         stream.Verbs.ShouldBe(["DESCRIBE"]);
+        stream.IsConnected.ShouldBeFalse();
     }
 
     [Theory]
     [InlineData("SETUP", "The camera refused the video track (454).")]
     [InlineData("PLAY", "The camera would not start the stream (454).")]
-    public async Task A_refused_step_says_which_and_still_ends_what_was_set_up(string step, string message)
+    public async Task A_refused_step_says_which(string step, string message)
     {
-        var stream = NextStream(s =>
+        if (step == "SETUP")
         {
-            if (step == "SETUP")
-            {
-                s.SetupStatus = 454;
-            }
-            else
-            {
-                s.PlayStatus = 454;
-            }
-        });
+            stream.SetupStatus = 454;
+        }
+        else
+        {
+            stream.PlayStatus = 454;
+        }
+
         await using var session = await OpenAsync();
 
-        var refused = await Should.ThrowAsync<RtspException>(() => session.GrabFrameAsync(TimeSpan.FromSeconds(5)));
+        var refused = await Should.ThrowAsync<LivePictureUnavailableException>(() => session.GrabFrameAsync(TimeSpan.FromSeconds(5)));
 
-        refused.Message.ShouldBe(message);
-        stream.Verbs.Contains("TEARDOWN").ShouldBe(step == "PLAY");
-    }
-
-    [Fact]
-    public async Task A_teardown_that_fails_does_not_hide_the_picture_that_did_arrive()
-    {
-        NextStream(s =>
-        {
-            s.Frames.Add(FakeRtspCamera.Jpeg(500));
-            s.TeardownFails = true;
-        });
-        await using var session = await OpenAsync();
-
-        (await session.GrabFrameAsync(TimeSpan.FromSeconds(5))).Jpeg.Length.ShouldBe(500);
+        refused.Message.ShouldBe(message + " " + LivePictureUnavailableException.Advice);
+        refused.InnerException.ShouldBeOfType<RtspException>();
     }
 
     [Fact]
     public async Task Noise_that_is_not_rtp_at_all_is_reported_once_it_passes_64_kilobytes()
     {
-        NextStream(s => s.NoiseAfterPlay = new byte[70_000]);
+        stream.NoiseAfterPlay = new byte[70_000];
         await using var session = await OpenAsync();
 
-        await Should.ThrowAsync<TimeoutException>(() => session.GrabFrameAsync(TimeSpan.FromSeconds(5)));
+        await Should.ThrowAsync<TimeoutException>(() => session.GrabFrameAsync(TimeSpan.FromMilliseconds(500)));
 
         trace.ShouldContain("rtsp: 70000 bytes arrived but none parsed as an RTP packet");
     }
@@ -217,25 +305,59 @@ public sealed class CameraSessionTests : IAsyncDisposable
     [Fact]
     public async Task The_stream_works_with_nobody_tracing_it()
     {
-        NextStream(s =>
-        {
-            s.NoiseAfterPlay = new byte[70_000];
-            s.Frames.AddRange([[1, 2, 3, 4, 5, 6], FakeRtspCamera.Jpeg(64)]);
-        });
+        stream.NoiseAfterPlay = new byte[70_000];
+        stream.Frames.AddRange([[1, 2, 3, 4, 5, 6], FakeRtspCamera.Jpeg(64)]);
+        stream.ClosesAfterFrames = true;
+        stream.Pace = TimeSpan.FromMilliseconds(50);
         await using var session = await OpenAsync();
         session.Trace = null;
 
         (await session.GrabFrameAsync(TimeSpan.FromSeconds(5))).Jpeg.Length.ShouldBe(64);
+        await Should.ThrowAsync<LivePictureUnavailableException>(async () =>
+        {
+            await foreach (var _ in session.StreamFramesAsync())
+            {
+            }
+        });
     }
 
     [Fact]
-    public async Task Ending_the_session_closes_the_control_channel()
+    public async Task Ending_the_session_closes_the_stream_and_then_the_control_channel()
+    {
+        stream.Frames.Add(FakeRtspCamera.Jpeg(500));
+        var session = await OpenAsync();
+        await session.GrabFrameAsync(TimeSpan.FromSeconds(5));
+
+        await session.DisposeAsync();
+
+        stream.IsConnected.ShouldBeFalse();
+        control.WasDisposed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Ending_the_session_while_the_stream_is_starting_ends_the_start_too()
+    {
+        stream.NeverAnswers = "DESCRIBE";
+        var session = await CameraSession.OpenAsync(Transport, "192.168.100.1", new(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30)));
+        var grabbing = session.GrabFrameAsync(TimeSpan.FromSeconds(30));
+        await EventuallyAsync(() => stream.Verbs.Contains("DESCRIBE"));
+
+        await session.DisposeAsync();
+
+        (await Should.ThrowAsync<LivePictureUnavailableException>(() => grabbing))
+            .Message.ShouldStartWith("The session ended before the live picture started.");
+        control.WasDisposed.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Ending_a_session_that_never_streamed_closes_only_the_control_channel()
     {
         var session = await OpenAsync();
 
         await session.DisposeAsync();
 
         control.WasDisposed.ShouldBeTrue();
+        streamsOpened.ShouldBe(0);
     }
 
     [Fact]
@@ -245,16 +367,6 @@ public sealed class CameraSessionTests : IAsyncDisposable
         await using var session = await CameraSession.OpenAsync(_ => control, "192.168.100.1");
 
         (await session.Control.GetStatusAsync(CancellationToken.None)).Length.ShouldBe(16);
-    }
-
-    [Fact]
-    public async Task A_camera_that_closes_the_stream_is_handled_with_nobody_tracing_it()
-    {
-        NextStream(s => s.ClosesAfterFrames = true);
-        await using var session = await OpenAsync();
-        session.Trace = null;
-
-        await Should.ThrowAsync<RtspException>(() => session.GrabFrameAsync(TimeSpan.FromSeconds(5)));
     }
 
     [Fact]
@@ -286,7 +398,7 @@ public sealed class CameraSessionTests : IAsyncDisposable
     }
 
     [Fact]
-    public void Not_being_on_the_cameras_network_is_explained()
+    public void The_exceptions_say_something_however_they_are_made()
     {
         var missing = Should.Throw<CameraNotReachableException>(() =>
             CameraAddress.RequireLocalAddressFor(IPAddress.Parse("203.0.113.1"), [IPAddress.Parse("10.0.0.2")]));
@@ -296,10 +408,25 @@ public sealed class CameraSessionTests : IAsyncDisposable
             .ShouldBe(IPAddress.Parse("192.168.100.3"));
         new CameraNotReachableException().Message.ShouldNotBeNullOrWhiteSpace();
         new CameraNotReachableException("m", new IOException()).InnerException.ShouldBeOfType<IOException>();
+        new LivePictureUnavailableException().Message.ShouldBe(LivePictureUnavailableException.Advice);
     }
 
     /// <inheritdoc />
-    public ValueTask DisposeAsync() => control.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        await control.DisposeAsync();
+        await stream.DisposeAsync();
+    }
+
+    private static async Task EventuallyAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!condition())
+        {
+            DateTime.UtcNow.ShouldBeLessThan(deadline, "the condition never held");
+            await Task.Delay(10);
+        }
+    }
 
     private sealed class RefusingTransport : ICameraTransport
     {

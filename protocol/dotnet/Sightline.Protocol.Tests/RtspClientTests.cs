@@ -152,17 +152,17 @@ public sealed class RtspClientTests
     }
 
     [Fact]
-    public async Task Teardown_ends_the_session_it_was_given()
+    public async Task Play_names_the_session_setup_was_given()
     {
         var transport = new ScriptedTransport([Reply(200, "", ("Session", "6363636363636363636363636363")), Reply(200, "")]);
         var client = new RtspClient(transport, "192.168.100.1");
         await client.ConnectAsync(CancellationToken.None);
         await client.SetupVideoAsync(CancellationToken.None);
 
-        var reply = await client.TeardownAsync(CancellationToken.None);
+        var reply = await client.PlayAsync(CancellationToken.None);
 
         reply.IsSuccess.ShouldBeTrue();
-        transport.Sent[^1].ShouldStartWith("TEARDOWN rtsp://192.168.100.1:8080/?action=stream RTSP/1.0");
+        transport.Sent[^1].ShouldStartWith("PLAY rtsp://192.168.100.1:8080/?action=stream RTSP/1.0");
         transport.Sent[^1].ShouldContain("Session: 6363636363636363636363636363");
     }
 

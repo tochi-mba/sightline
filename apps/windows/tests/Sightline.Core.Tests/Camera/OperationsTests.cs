@@ -10,25 +10,34 @@ namespace Sightline.Core.Tests.Camera;
 public sealed class OperationsTests
 {
     [Fact]
-    public async Task The_live_view_runs_while_somebody_holds_it_and_stops_when_the_last_lets_go()
+    public async Task The_live_view_shows_while_somebody_holds_it_and_the_stream_stays_open_when_nobody_does()
     {
         await using var camera = new ControllerHarness();
+        camera.Stream = s =>
+        {
+            s.Pace = TimeSpan.FromMilliseconds(20);
+            s.Frames.AddRange(Enumerable.Range(0, 300).Select(i => FakeRtspCamera.Jpeg(600 + i)));
+        };
         var frames = new List<LiveFrame>();
         camera.Controller.FrameArrived += frames.Add;
         await camera.ConnectedAsync();
 
         camera.Controller.HoldLive("window");
         camera.Controller.HoldLive("sentry");
-        await camera.UntilAsync(s => s.Live is LiveView.Playing);
+        (await camera.UntilAsync(s => s.Live is LiveView.Playing)).HoldsLivePicture.ShouldBeTrue();
         camera.Controller.ReleaseLive("window");
         // Still running for Sentry: playing, or between quick stalls on these shortened timings.
         camera.State.Live.ShouldNotBeOfType<LiveView.Off>();
         camera.Controller.ReleaseLive("sentry");
-
         await camera.UntilAsync(s => s.Live is LiveView.Off);
+
+        // The camera answers one stream per power-on, so letting go of the picture keeps the stream.
+        camera.Streams[0].IsConnected.ShouldBeTrue();
+        camera.State.HoldsLivePicture.ShouldBeTrue();
+        camera.Controller.HoldLive("window");
+        await camera.UntilAsync(s => s.Live is LiveView.Playing);
+        camera.Streams.Count.ShouldBe(1);
         frames[0].Width.ShouldBe(640);
-        frames[0].Jpeg.Length.ShouldBe(600);
-        await ControllerHarness.EventuallyAsync(() => camera.Streams[0].Verbs.LastOrDefault() == "TEARDOWN");
     }
 
     [Fact]
@@ -44,25 +53,47 @@ public sealed class OperationsTests
     }
 
     [Fact]
-    public async Task A_stream_that_goes_quiet_or_ends_is_started_again_and_its_rate_measured()
+    public async Task A_stream_the_camera_ends_has_its_rate_measured_and_is_not_asked_for_again()
     {
         await using var camera = new ControllerHarness();
         camera.Stream = s =>
         {
-            s.Frames.AddRange(Enumerable.Range(0, 30).Select(i => FakeRtspCamera.Jpeg(300 + i)));
+            s.Pace = TimeSpan.FromMilliseconds(20);
+            s.Frames.AddRange(Enumerable.Range(0, 80).Select(i => FakeRtspCamera.Jpeg(300 + i)));
             s.ClosesAfterFrames = true;
         };
         await camera.ConnectedAsync();
 
         camera.Controller.HoldLive("window");
-        var interrupted = (await camera.UntilAsync(s => s.Live is LiveView.Interrupted)).Live.ShouldBeOfType<LiveView.Interrupted>();
+        var gone = (await camera.UntilAsync(s => s.Live is LiveView.Unavailable)).Live.ShouldBeOfType<LiveView.Unavailable>();
 
-        interrupted.Reason.ShouldBe("The camera ended the live view.");
-        await ControllerHarness.EventuallyAsync(() => camera.Streams.Count >= 2);
+        gone.Reason.ShouldBe("The camera ended its live picture. " + LivePictureUnavailableException.Advice);
+        camera.Seen.ShouldContain(s => s.Live is LiveView.Playing && ((LiveView.Playing)s.Live).FramesPerSecond > 0);
+        camera.State.HoldsLivePicture.ShouldBeFalse();
+        camera.Controller.ReleaseLive("window");
+        camera.Controller.HoldLive("window");
+        await camera.UntilAsync(s => s.Live is LiveView.Unavailable);
+        camera.Streams.Count.ShouldBe(1);
     }
 
     [Fact]
-    public async Task A_stream_the_camera_refuses_is_retried_and_says_why()
+    public async Task A_quiet_stream_is_said_and_waited_on_without_another_connection()
+    {
+        await using var camera = new ControllerHarness();
+        camera.Stream = s => s.StreamStarted = () => false;
+        await camera.ConnectedAsync();
+
+        camera.Controller.HoldLive("window");
+
+        var quiet = (await camera.UntilAsync(s => s.Live is LiveView.Interrupted)).Live.ShouldBeOfType<LiveView.Interrupted>();
+        quiet.Reason.ShouldBe("The camera sent nothing for 0 seconds.");
+        await Task.Delay(800);
+        camera.Streams.Count.ShouldBe(1);
+        camera.Streams[0].Verbs.ShouldBe(["DESCRIBE", "SETUP", "PLAY"]);
+    }
+
+    [Fact]
+    public async Task A_stream_the_camera_refuses_says_why_and_is_not_asked_for_again()
     {
         await using var camera = new ControllerHarness();
         camera.Stream = s => s.SetupStatus = 454;
@@ -70,9 +101,33 @@ public sealed class OperationsTests
 
         camera.Controller.HoldLive("window");
 
-        var interrupted = (await camera.UntilAsync(s => s.Live is LiveView.Interrupted)).Live.ShouldBeOfType<LiveView.Interrupted>();
-        interrupted.Reason.ShouldBe("The camera refused the video track (454).");
-        await ControllerHarness.EventuallyAsync(() => camera.Streams.Count >= 4);
+        var gone = (await camera.UntilAsync(s => s.Live is LiveView.Unavailable)).Live.ShouldBeOfType<LiveView.Unavailable>();
+        gone.Reason.ShouldStartWith("The camera refused the video track (454).");
+        await Task.Delay(300);
+        camera.Streams.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Switching_the_camera_off_and_on_brings_the_picture_back_with_the_reconnect()
+    {
+        await using var camera = new ControllerHarness();
+        camera.Stream = s =>
+        {
+            s.Pace = TimeSpan.FromMilliseconds(20);
+            s.Frames.AddRange(Enumerable.Range(0, 300).Select(i => FakeRtspCamera.Jpeg(300 + i)));
+        };
+        await camera.ConnectedAsync();
+        camera.Controller.HoldLive("window");
+        await camera.UntilAsync(s => s.Live is LiveView.Playing);
+        camera.Streams[0].HangUp();
+        await camera.UntilAsync(s => s.Live is LiveView.Unavailable);
+
+        // Switched off: the network goes. Switched on: the reconnect finds a camera with its picture to give.
+        camera.Link.PowerCycle();
+        camera.Link.Lease.Lose();
+
+        await camera.UntilAsync(s => s.Live is LiveView.Playing && s.HoldsLivePicture);
+        camera.Streams.Count.ShouldBe(2);
     }
 
     [Fact]

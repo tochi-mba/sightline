@@ -108,10 +108,6 @@ public sealed class RtspClient : IAsyncDisposable
     public Task<RtspReply> PlayAsync(CancellationToken cancellationToken = default) =>
         SendAsync("PLAY", baseUrl, new() { ["Range"] = "npt=0.000-" }, cancellationToken);
 
-    /// <summary>Ends the session.</summary>
-    public Task<RtspReply> TeardownAsync(CancellationToken cancellationToken = default) =>
-        SendAsync("TEARDOWN", baseUrl, null, cancellationToken);
-
     /// <summary>
     /// Reads whatever stream bytes have arrived, for feeding to a reassembler.
     /// </summary>

@@ -63,6 +63,9 @@ public sealed class FakeCamera : ICameraTransport
     /// <summary>Whether the camera is recording to its card.</summary>
     public bool IsRecording { get; set; }
 
+    /// <summary>Raised when the camera is put into browse mode, which ends its stream.</summary>
+    public event Action? EnteredBrowse;
+
     /// <summary>Whether the media flow has been started.</summary>
     public bool IsStreaming { get; set; }
 
@@ -298,6 +301,13 @@ public sealed class FakeCamera : ICameraTransport
 
             case GpSockCommand.SetMode:
                 Mode = (CameraMode)payload[0];
+                if (Mode == CameraMode.Browse)
+                {
+                    // The real camera stops its stream to browse, and hangs up the connection it was on.
+                    IsStreaming = false;
+                    EnteredBrowse?.Invoke();
+                }
+
                 Ack(command, []);
                 break;
 

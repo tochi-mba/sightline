@@ -140,9 +140,10 @@ public sealed class MainWindowTests
         using var shell = new ShellViewModel(app.Parts);
         var window = Show(shell);
         await app.ConnectedAsync();
-        app.Control.IsStreaming = false;
+        await UntilAsync(() => app.Controller.State.HoldsLivePicture);
 
         Click(Find<Button>(window, "LibraryTab"));
+        Click(Find<Button>(window, "ReadCard"));
         await UntilAsync(() => Find<ItemsControl>(window, "Files").ItemCount == 1 && shell.Library.Idle);
 
         Find<TextBlock>(window, "Heading").Text.ShouldBe("1 photo");

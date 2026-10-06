@@ -16,14 +16,11 @@ internal sealed class ControllerHarness : IAsyncDisposable
         LongAnswer: TimeSpan.FromSeconds(3),
         TransferStall: TimeSpan.FromMilliseconds(400),
         StatusInterval: TimeSpan.FromMilliseconds(100),
-        LiveRetry: TimeSpan.FromMilliseconds(50),
-        LiveRetryCap: TimeSpan.FromMilliseconds(150),
         ReconnectDelay: TimeSpan.FromMilliseconds(50),
         ReconnectAttempts: 3);
 
     /// <summary>The stream's timings, shortened likewise.</summary>
-    public static readonly CameraSessionTiming QuickStream = new(
-        TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(300), TimeSpan.FromMilliseconds(200));
+    public static readonly CameraSessionTiming QuickStream = new(TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(300));
 
     public ControllerHarness(bool reconnects = true)
     {

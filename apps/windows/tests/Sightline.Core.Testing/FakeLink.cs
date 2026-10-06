@@ -6,10 +6,43 @@ using Sightline.Testing;
 namespace Sightline.Core.Testing;
 
 /// <summary>The camera's network over a fake camera, which joins unless told to fail.</summary>
-public sealed class FakeLink(FakeCamera control) : ICameraLink
+/// <remarks>
+/// The camera behind it keeps the reference camera's rule for its picture: it answers the first stream
+/// connection after it is switched on and no other, until <see cref="PowerCycle"/>; and browse mode
+/// hangs up the one it is serving.
+/// </remarks>
+public sealed class FakeLink : ICameraLink
 {
+    private readonly FakeCamera control;
+    private int served;
+
+    /// <summary>A network onto <paramref name="control"/>.</summary>
+    public FakeLink(FakeCamera control)
+    {
+        this.control = control;
+        control.EnteredBrowse += () =>
+        {
+            lock (Streams)
+            {
+                foreach (var stream in Streams)
+                {
+                    stream.HangUp();
+                }
+            }
+        };
+    }
+
     /// <summary>The camera's control channel.</summary>
     public FakeCamera Control => control;
+
+    /// <summary>Switches the camera off and on: its next stream connection is answered again.</summary>
+    public void PowerCycle()
+    {
+        lock (Streams)
+        {
+            served = 0;
+        }
+    }
 
     /// <summary>Whether each join was a reconnect, in order.</summary>
     public List<bool> Requests { get; } = [];
@@ -61,6 +94,12 @@ public sealed class FakeLink(FakeCamera control) : ICameraLink
         Stream(stream);
         lock (Streams)
         {
+            if (served++ > 0)
+            {
+                // A connection after the first since power-on: accepted, and never answered.
+                stream.NeverAnswers ??= "DESCRIBE";
+            }
+
             Streams.Add(stream);
         }
 

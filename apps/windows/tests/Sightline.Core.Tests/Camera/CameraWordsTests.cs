@@ -28,9 +28,11 @@ public sealed class CameraWordsTests
     {
         CameraWords.Picture(Connected with { Connection = new Connection.Reconnecting(2, 4, Lost) })
             .ShouldBe("Reconnecting to the camera, attempt 2 of 4");
-        CameraWords.Picture(Connected with { Live = new LiveView.Interrupted("x") }).ShouldBe("The picture stopped. Starting it again.");
+        CameraWords.Picture(Connected with { Live = new LiveView.Interrupted("x") }).ShouldBe("The camera stopped sending its picture. Waiting for it.");
+        CameraWords.Picture(Connected with { Live = new LiveView.Unavailable("x") })
+            .ShouldBe("No live picture until the camera is switched off and on. It gives one each time it starts.");
         CameraWords.Picture(Connected with { Live = LiveView.Starting.Instance }).ShouldBe("Starting the picture");
-        CameraWords.Picture(Connected with { Live = LiveView.Paused.Instance }).ShouldBe("Paused while the card is read");
+        CameraWords.Picture(Connected with { Live = LiveView.Paused.Instance }).ShouldBe("The card is being read");
         CameraWords.Picture(Connected with { Live = new LiveView.Playing(12) }).ShouldBeNull();
     }
 

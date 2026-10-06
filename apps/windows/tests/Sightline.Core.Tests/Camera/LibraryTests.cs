@@ -41,7 +41,6 @@ public sealed class LibraryTests
     public async Task The_card_is_listed_with_thumbnails_and_the_camera_put_back()
     {
         await using var camera = await WithCardAsync();
-        camera.Control.IsStreaming = false;
 
         var files = await ListedAsync(camera);
 
@@ -53,18 +52,18 @@ public sealed class LibraryTests
     }
 
     [Fact]
-    public async Task Reading_the_card_pauses_the_live_view_and_starts_it_again()
+    public async Task Reading_the_card_ends_the_live_picture_until_the_camera_is_switched_off_and_on()
     {
         await using var camera = await WithCardAsync();
         camera.Controller.HoldLive("window");
-        await camera.UntilAsync(s => s.Live is LiveView.Playing);
+        (await camera.UntilAsync(s => s.Live is LiveView.Playing)).HoldsLivePicture.ShouldBeTrue();
 
         var files = await ListedAsync(camera);
 
         files.Count.ShouldBe(2);
-        camera.State.Library.Thumbnails.ShouldBeEmpty();
         camera.Seen.ShouldContain(s => s.Live is LiveView.Paused);
-        await ControllerHarness.EventuallyAsync(() => camera.Streams.Count >= 2);
+        (await camera.UntilAsync(s => s.Live is LiveView.Unavailable)).HoldsLivePicture.ShouldBeFalse();
+        camera.Streams.Count.ShouldBe(1);
     }
 
     [Fact]

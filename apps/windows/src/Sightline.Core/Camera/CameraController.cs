@@ -9,8 +9,6 @@ namespace Sightline.Core.Camera;
 /// <param name="LongAnswer">For a request answered in many frames: the menu, or the card's file list.</param>
 /// <param name="TransferStall">For a download to go without a byte before it is called stalled.</param>
 /// <param name="StatusInterval">Between status polls while connected.</param>
-/// <param name="LiveRetry">After the live view fails, times the failures in a row, before it is started again.</param>
-/// <param name="LiveRetryCap">The longest wait before starting the live view again.</param>
 /// <param name="ReconnectDelay">After a camera is lost, times the attempt number, before trying again.</param>
 /// <param name="ReconnectAttempts">How many times a lost camera is tried before giving up.</param>
 public sealed record ControllerTiming(
@@ -18,8 +16,6 @@ public sealed record ControllerTiming(
     TimeSpan LongAnswer,
     TimeSpan TransferStall,
     TimeSpan StatusInterval,
-    TimeSpan LiveRetry,
-    TimeSpan LiveRetryCap,
     TimeSpan ReconnectDelay,
     int ReconnectAttempts)
 {
@@ -29,8 +25,6 @@ public sealed record ControllerTiming(
         TimeSpan.FromSeconds(60),
         TimeSpan.FromSeconds(15),
         TimeSpan.FromSeconds(2),
-        TimeSpan.FromSeconds(2),
-        TimeSpan.FromSeconds(10),
         TimeSpan.FromSeconds(3),
         5);
 }
@@ -485,10 +479,10 @@ public sealed class CameraController : IAsyncDisposable
                 current = null;
             }
 
-            // The stream first, while its RTSP session can still be ended politely; then the operations are
+            // Watching stops first, so nothing reports the stream's end as a failure; then the operations are
             // cancelled, so one waiting on the camera ends as cancelled rather than as a camera that failed;
-            // then the control channel closes, which ends any request that ignored the cancelling; and only
-            // then are the operations waited for.
+            // then the session closes, stream and control channel, which ends any request that ignored the
+            // cancelling; and only then are the operations waited for.
             await StopLiveAsync().ConfigureAwait(false);
             await connected.Work.CancelAsync().ConfigureAwait(false);
             await session.DisposeAsync().ConfigureAwait(false);
@@ -707,6 +701,8 @@ public sealed class CameraController : IAsyncDisposable
                 browsing = false;
             }
 
+            // The camera hung up its stream to browse, and will not answer another until it restarts.
+            Update(s => s with { HoldsLivePicture = false });
             UpdateLive();
         }
     }
@@ -894,30 +890,33 @@ public sealed class CameraController : IAsyncDisposable
         UpdateLive();
     }
 
-    /// <summary>Streams pictures until cancelled, starting the stream again whenever it fails.</summary>
+    /// <summary>
+    /// Shows the camera's pictures until cancelled. A quiet spell is said and waited out on the same stream;
+    /// a picture the camera will not give again ends it.
+    /// </summary>
     private async Task RunLiveAsync(Connected connected, CancellationToken cancellationToken)
     {
-        var failures = 0;
         try
         {
-            // Until cancelled, which a stream being read or a wait before the next start ends by throwing.
+            ShowLive(LiveView.Starting.Instance, cancellationToken);
+
+            // Until cancelled, which reading the stream ends by throwing.
             while (true)
             {
-                ShowLive(LiveView.Starting.Instance, cancellationToken);
                 Stopwatch? window = null;
                 var windowFrames = 0;
-                string reason;
                 try
                 {
                     await foreach (var frame in connected.Session.StreamFramesAsync(cancellationToken).ConfigureAwait(false))
                     {
                         FrameArrived?.Invoke(new LiveFrame(frame.Jpeg, frame.Width, frame.Height, Interlocked.Increment(ref frameNumber)));
-                        failures = 0;
                         if (window is null)
                         {
                             // The first picture starts the count: how long the stream took to start is not its rate.
                             window = Stopwatch.StartNew();
-                            ShowLive(new LiveView.Playing(0), cancellationToken);
+                            Update(s => cancellationToken.IsCancellationRequested
+                                ? s
+                                : s with { Live = new LiveView.Playing(0), HoldsLivePicture = true });
                         }
                         else
                         {
@@ -931,18 +930,20 @@ public sealed class CameraController : IAsyncDisposable
                             }
                         }
                     }
-
-                    reason = "The camera ended the live view.";
                 }
-                catch (Exception failure) when (failure is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                catch (TimeoutException quiet)
                 {
-                    reason = Problem.WhileTalking(failure).Detail;
+                    // The stream is still open; watching it again costs nothing.
+                    ShowLive(new LiveView.Interrupted(quiet.Message), cancellationToken);
                 }
-
-                failures++;
-                ShowLive(new LiveView.Interrupted(reason), cancellationToken);
-                var wait = timing.LiveRetry * failures;
-                await Task.Delay(wait < timing.LiveRetryCap ? wait : timing.LiveRetryCap, cancellationToken).ConfigureAwait(false);
+                catch (LivePictureUnavailableException unavailable)
+                {
+                    // Asking again would open a connection the camera never answers, so this is where it stops.
+                    Update(s => cancellationToken.IsCancellationRequested
+                        ? s
+                        : s with { Live = new LiveView.Unavailable(unavailable.Message), HoldsLivePicture = false });
+                    return;
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

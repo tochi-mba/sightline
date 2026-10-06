@@ -15,7 +15,10 @@ public sealed class LibraryViewModelTests
 
     private static readonly Preferences Returning = Preferences.Default with { OnboardingDone = true, LastVersion = "0.2.0" };
 
-    /// <summary>A shell on the Library page, with a camera holding a photo and a video, connected.</summary>
+    /// <summary>
+    /// A shell on the Library page, with a camera holding a photo and a video, connected, its picture
+    /// seen on the Live page and its card then read on request.
+    /// </summary>
     private static async Task<ShellViewModel> OpenCardAsync(TestApp app)
     {
         app.Control.ThumbnailOf = _ => TestPictures.Jpeg(150);
@@ -24,9 +27,9 @@ public sealed class LibraryViewModelTests
         app.Control.DownloadChunk = 1000;
         var shell = new ShellViewModel(app.Parts);
         await app.ConnectedAsync();
-        // The fake camera refuses thumbnails while it streams, and the Live page started the stream.
-        app.Control.IsStreaming = false;
+        await TestApp.EventuallyAsync(() => app.Controller.State.HoldsLivePicture);
         shell.GoCommand.Execute(Page.Library);
+        shell.Library.RefreshCommand.Execute(null);
         // Thumbnails arrive while the card is still being read; the page is ready once the camera is free.
         await TestApp.EventuallyAsync(() =>
             shell.Library.Items.Count == 2 && shell.Library.Items.All(i => i.Thumbnail is not null) && shell.Library.Idle);
@@ -164,6 +167,37 @@ public sealed class LibraryViewModelTests
         await TestApp.EventuallyAsync(() => !library.Connected);
         library.RefreshCommand.CanExecute(null).ShouldBeFalse();
         library.Heading.ShouldBe("No camera connected");
+    }
+
+    [AvaloniaFact]
+    public async Task Once_the_picture_has_been_seen_the_card_waits_to_be_asked_and_says_what_it_costs()
+    {
+        await using var app = new TestApp(Returning);
+        using var shell = new ShellViewModel(app.Parts);
+        await app.ConnectedAsync();
+        await TestApp.EventuallyAsync(() => app.Controller.State.HoldsLivePicture);
+
+        shell.GoCommand.Execute(Page.Library);
+
+        app.Controller.State.Library.Reading.ShouldBeFalse();
+        shell.Library.Heading.ShouldBe("The card");
+        shell.Library.Detail.ShouldBe(
+            "Reading the card ends the live picture until the camera is switched off and on: "
+            + "it cannot show its picture and list its files at once.");
+    }
+
+    [AvaloniaFact]
+    public async Task Before_the_picture_has_been_seen_the_card_is_read_on_opening()
+    {
+        await using var app = new TestApp(Returning);
+        using var shell = new ShellViewModel(app.Parts);
+        shell.GoCommand.Execute(Page.Library);
+        await app.ConnectedAsync();
+
+        shell.Library.Opened();
+
+        await TestApp.EventuallyAsync(() => app.Controller.State.Library.Files is not null);
+        app.Controller.State.HoldsLivePicture.ShouldBeFalse();
     }
 
     [AvaloniaFact]

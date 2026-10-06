@@ -6,7 +6,7 @@ using Sightline.Protocol.Rtp;
 namespace Sightline.Core;
 
 /// <summary>
-/// One conversation with one camera: its control channel, and its picture when asked for.
+/// One conversation with one camera: its control channel, and its one live stream once asked for.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,6 +23,10 @@ public sealed class CameraSession : IAsyncDisposable
     private readonly Func<int, ICameraTransport> transports;
     private readonly string host;
     private readonly CameraSessionTiming timing;
+    private readonly Lock feedGate = new();
+    private readonly CancellationTokenSource closing = new();
+    private Task<LiveFeed>? feed;
+    private string? spent;
 
     private CameraSession(GpSockConnection control, Func<int, ICameraTransport> transports, string host, CameraSessionTiming timing)
     {
@@ -94,109 +98,140 @@ public sealed class CameraSession : IAsyncDisposable
     }
 
     /// <summary>
+    /// Whether this session holds the camera's live picture: its one stream connection is open and
+    /// still running, so anything that ends it, such as browsing the card, costs the live picture until
+    /// the camera is switched off and on.
+    /// </summary>
+    public bool HoldsLivePicture
+    {
+        get
+        {
+            lock (feedGate)
+            {
+                return feed is not null && spent is null;
+            }
+        }
+    }
+
+    /// <summary>
     /// Takes one picture from the live stream, without touching the camera's card.
     /// </summary>
     /// <remarks>
-    /// The stream has to be started on the control channel first; RTSP alone negotiates happily
-    /// and then delivers nothing.
+    /// The picture comes from the session's one stream (see <see cref="StreamFramesAsync"/>), which this
+    /// starts if nothing has yet, and leaves running.
     /// </remarks>
     /// <param name="timeout">How long to wait for a whole picture.</param>
     /// <param name="cancellationToken">Gives up.</param>
     /// <exception cref="TimeoutException">No whole picture arrived in time.</exception>
+    /// <exception cref="LivePictureUnavailableException">The camera will not give this session a live picture.</exception>
     public async Task<CameraFrame> GrabFrameAsync(TimeSpan timeout, CancellationToken cancellationToken = default)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(timeout);
         try
         {
-            // Returning from inside the loop disposes the stream, which is what sends its TEARDOWN.
-            await foreach (var frame in StreamFramesAsync(deadline.Token).ConfigureAwait(false))
-            {
-                return frame;
-            }
+            var live = await FeedAsync(deadline.Token).ConfigureAwait(false);
+            using var pictures = live.Subscribe();
+            return await pictures.NextAsync(timeout, deadline.Token).ConfigureAwait(false);
         }
         catch (Exception exception) when (!cancellationToken.IsCancellationRequested
                                           && exception is OperationCanceledException or TimeoutException)
         {
             throw new TimeoutException($"No whole picture arrived within {timeout.TotalSeconds:0} seconds.", exception);
         }
-
-        throw new RtspException("The camera stopped sending before a whole picture arrived.");
     }
 
     /// <summary>
-    /// The live picture, frame after frame, until cancelled or the camera stops.
+    /// The live picture, frame after frame, until cancelled.
     /// </summary>
     /// <remarks>
-    /// The stream is started on the control channel first, for the reason
-    /// <see cref="GrabFrameAsync"/> gives. Frames that are not whole JPEGs are skipped rather than
-    /// passed on, so a consumer can decode everything it receives.
+    /// <para>
+    /// The camera answers one stream connection each time it is switched on, and cannot be asked to stop
+    /// one: TEARDOWN is not implemented and PAUSE is ignored. So the session opens the stream once, the
+    /// first time a picture is wanted, and keeps it until the session ends. Ending this enumeration stops
+    /// these pictures and leaves the stream running for whoever asks next.
+    /// </para>
+    /// <para>
+    /// The stream is started on the control channel first: RTSP alone negotiates happily and then
+    /// delivers nothing. Frames that are not whole JPEGs are skipped, so a consumer can decode
+    /// everything it receives.
+    /// </para>
     /// </remarks>
-    /// <param name="cancellationToken">Stops the stream.</param>
+    /// <param name="cancellationToken">Stops these pictures.</param>
+    /// <exception cref="TimeoutException">
+    /// Nothing arrived for <see cref="CameraSessionTiming.Stall"/>. The stream stays open; asking again waits on it again.
+    /// </exception>
+    /// <exception cref="LivePictureUnavailableException">
+    /// The camera will not give this session a live picture: it ended the one it gave, or never started it.
+    /// </exception>
     public async IAsyncEnumerable<CameraFrame> StreamFramesAsync(
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        await using var rtsp = new RtspClient(transports(RtspClient.Port), host);
-        try
+        var live = await FeedAsync(cancellationToken).ConfigureAwait(false);
+        using var pictures = live.Subscribe();
+        while (true)
         {
-            await StartStreamAsync(rtsp, cancellationToken).ConfigureAwait(false);
+            yield return await pictures.NextAsync(timing.Stall, cancellationToken).ConfigureAwait(false);
+        }
+    }
 
-            var reassembler = new RtpJpegReassembler();
-            var received = 0L;
-            while (!cancellationToken.IsCancellationRequested)
+    /// <summary>
+    /// Ends the session: the stream, then the control channel.
+    /// </summary>
+    /// <remarks>The camera stops recording when the control channel goes.</remarks>
+    public async ValueTask DisposeAsync()
+    {
+        await closing.CancelAsync().ConfigureAwait(false);
+        Task<LiveFeed>? started;
+        lock (feedGate)
+        {
+            started = feed;
+        }
+
+        if (started is not null)
+        {
+            try
             {
-                var bytes = await ReadOrStallAsync(rtsp, cancellationToken).ConfigureAwait(false);
-                if (bytes.IsEmpty)
-                {
-                    Trace?.Invoke($"rtsp: the camera closed the stream after {received} bytes");
-                    yield break;
-                }
-
-                if (received == 0)
-                {
-                    Trace?.Invoke($"rtsp: first stream bytes arrived: {Convert.ToHexString(bytes.Span[..Math.Min(16, bytes.Length)])}");
-                }
-
-                received += bytes.Length;
-                foreach (var frame in reassembler.Push(bytes.Span))
-                {
-                    if (RtpJpegReassembler.LooksLikeJpeg(frame.Jpeg))
-                    {
-                        yield return frame;
-                    }
-                    else
-                    {
-                        Trace?.Invoke($"rtsp: a {frame.Jpeg.Length}-byte frame was not a whole JPEG and was skipped");
-                    }
-                }
-
-                if (Trace is not null && reassembler.PacketsRead == 0 && received > 64 * 1024)
-                {
-                    Trace($"rtsp: {received} bytes arrived but none parsed as an RTP packet");
-                }
+                await (await started.ConfigureAwait(false)).DisposeAsync().ConfigureAwait(false);
+            }
+            catch (LivePictureUnavailableException)
+            {
+                // It never started, and closed what it had opened on the way out.
             }
         }
-        finally
+
+        await Control.DisposeAsync().ConfigureAwait(false);
+        closing.Dispose();
+    }
+
+    /// <summary>The session's one stream, started by whoever asks first.</summary>
+    private Task<LiveFeed> FeedAsync(CancellationToken cancellationToken)
+    {
+        Task<LiveFeed> starting;
+        lock (feedGate)
         {
-            // On every way out - cancelled, failed, or the consumer simply stopped iterating. The
-            // camera's RTSP server is single-threaded and does not reap an abandoned session: one
-            // left without a TEARDOWN stops it answering anybody until the camera is restarted,
-            // and putting its Wi-Fi to sleep and back does not clear it. Found the hard way.
-            await TryTeardownAsync(rtsp).ConfigureAwait(false);
+            if (spent is { } reason)
+            {
+                throw new LivePictureUnavailableException(reason);
+            }
+
+            starting = feed ??= StartFeedAsync();
         }
+
+        return starting.WaitAsync(cancellationToken);
     }
 
     /// <summary>
     /// Starts the media flow and negotiates the stream, all within <see cref="CameraSessionTiming.Start"/>.
     /// </summary>
     /// <remarks>
-    /// Separate from the iterator because C# will not yield inside a try with a catch, and turning a
-    /// silent hang into a <see cref="TimeoutException"/> needs one. Without a deadline, a camera that
-    /// never acknowledges the start leaves a live view black forever with nothing said.
+    /// Not tied to whoever asked first: giving up waiting must not abandon a start others may be waiting
+    /// on. Any failure is final for this session, because a second connection would not be answered.
     /// </remarks>
-    private async Task StartStreamAsync(RtspClient rtsp, CancellationToken cancellationToken)
+    private async Task<LiveFeed> StartFeedAsync()
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var rtsp = new RtspClient(transports(RtspClient.Port), host);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(closing.Token);
         deadline.CancelAfter(timing.Start);
         try
         {
@@ -224,66 +259,76 @@ public sealed class CameraSession : IAsyncDisposable
                 throw new RtspException($"The camera would not start the stream ({play.StatusCode}).");
             }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (Exception failure) when (failure is not OutOfMemoryException)
         {
-            throw new TimeoutException(
-                $"The camera did not start its stream within {timing.Start.TotalSeconds:0} seconds.");
+            await rtsp.DisposeAsync().ConfigureAwait(false);
+            var reason = failure switch
+            {
+                OperationCanceledException when closing.IsCancellationRequested =>
+                    "The session ended before the live picture started.",
+                OperationCanceledException =>
+                    $"The camera did not start its live picture within {timing.Start.TotalSeconds:0} seconds, "
+                    + "which is what it does once it has given its live picture to an earlier connection.",
+                _ => failure.Message,
+            };
+            throw new LivePictureUnavailableException(Spend(reason), failure);
         }
+
+        return new LiveFeed(rtsp, () => Trace, Spend);
     }
 
-    private async Task<ReadOnlyMemory<byte>> ReadOrStallAsync(RtspClient rtsp, CancellationToken cancellationToken)
+    /// <summary>Records that this session's live picture is gone, and returns what to tell people.</summary>
+    private string Spend(string reason)
     {
-        using var stall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        stall.CancelAfter(timing.Stall);
-        try
+        var told = $"{reason} {LivePictureUnavailableException.Advice}";
+        lock (feedGate)
         {
-            return await rtsp.ReadStreamAsync(stall.Token).ConfigureAwait(false);
+            spent ??= told;
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            throw new TimeoutException(
-                $"The camera sent nothing for {timing.Stall.TotalSeconds:0} seconds.");
-        }
+
+        return told;
     }
-
-    private async Task TryTeardownAsync(RtspClient rtsp)
-    {
-        if (rtsp.Session is null)
-        {
-            // SETUP never succeeded, so there is no session on the camera to end.
-            return;
-        }
-
-        try
-        {
-            using var shortly = new CancellationTokenSource(timing.Teardown);
-            await rtsp.TeardownAsync(shortly.Token).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is IOException or OperationCanceledException or RtspException
-                                              or System.Net.Sockets.SocketException or InvalidOperationException)
-        {
-            // Best effort, and it runs from a finally: throwing here would replace whatever error
-            // brought the stream down with a less useful one about saying goodbye.
-        }
-    }
-
-    /// <summary>
-    /// Ends the session.
-    /// </summary>
-    /// <remarks>The camera stops recording and streaming when this happens.</remarks>
-    public ValueTask DisposeAsync() => Control.DisposeAsync();
 }
 
 /// <summary>How long each step of the stream is given.</summary>
 /// <param name="Start">To start: RestartStreaming, then RTSP's DESCRIBE, SETUP and PLAY.</param>
-/// <param name="Stall">To go silent before it is called stopped. At about 12 pictures a second this is
+/// <param name="Stall">To go silent before a watcher is told so. At about 12 pictures a second this is
 /// many dozens of missing frames.</param>
-/// <param name="Teardown">To end the RTSP session properly on the way out.</param>
-public sealed record CameraSessionTiming(TimeSpan Start, TimeSpan Stall, TimeSpan Teardown)
+public sealed record CameraSessionTiming(TimeSpan Start, TimeSpan Stall)
 {
     /// <summary>The real timings.</summary>
-    public static CameraSessionTiming Default { get; } =
-        new(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(2));
+    public static CameraSessionTiming Default { get; } = new(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(8));
+}
+
+/// <summary>
+/// The camera will not give this session a live picture, and asking again will not change that until
+/// the camera is switched off and on.
+/// </summary>
+/// <remarks>
+/// The reference camera answers one stream connection per power-on, and ends it when its card is
+/// browsed; see PROTOCOL.md, "One stream per power-on".
+/// </remarks>
+public sealed class LivePictureUnavailableException : Exception
+{
+    /// <summary>What to do about it, said after every reason.</summary>
+    public const string Advice =
+        "This camera gives one live picture each time it is switched on: switch it off and on to see it again.";
+
+    /// <summary>Creates the exception.</summary>
+    public LivePictureUnavailableException(string message) : base(message)
+    {
+    }
+
+    /// <summary>Creates the exception.</summary>
+    public LivePictureUnavailableException()
+        : base(Advice)
+    {
+    }
+
+    /// <summary>Creates the exception.</summary>
+    public LivePictureUnavailableException(string message, Exception inner) : base(message, inner)
+    {
+    }
 }
 
 /// <summary>This machine cannot reach the camera, usually because it is not on its Wi-Fi.</summary>

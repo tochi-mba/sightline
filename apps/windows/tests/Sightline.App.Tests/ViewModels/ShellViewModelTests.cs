@@ -106,23 +106,38 @@ public sealed class ShellViewModelTests
     {
         await using var app = new TestApp(Returning);
         using var shell = new ShellViewModel(app.Parts);
-        app.Control.AddFile('J', new DateTime(2026, 10, 4, 18, 35, 0), TestPictures.Jpeg(120));
         await app.ConnectedAsync();
         await TestApp.EventuallyAsync(() => app.Controller.State.Live is LiveView.Playing);
 
         shell.GoCommand.Execute(Page.Library);
-
         (shell.IsLive, shell.IsLibrary, shell.IsSentry, shell.IsSettings).ShouldBe((false, true, false, false));
-        await TestApp.EventuallyAsync(() => shell.Library.Items.Count == 1);
         await TestApp.EventuallyAsync(() => app.Controller.State.Live is LiveView.Off);
-
         shell.GoCommand.Execute(Page.Sentry);
         shell.IsSentry.ShouldBeTrue();
         shell.GoCommand.Execute(Page.Settings);
         shell.IsSettings.ShouldBeTrue();
         shell.GoCommand.Execute(Page.Live);
+
         shell.IsLive.ShouldBeTrue();
         await TestApp.EventuallyAsync(() => app.Controller.State.Live is LiveView.Playing);
+    }
+
+    [AvaloniaFact]
+    public async Task After_the_card_is_read_the_live_page_says_the_camera_needs_switching_off_and_on()
+    {
+        await using var app = new TestApp(Returning);
+        using var shell = new ShellViewModel(app.Parts);
+        app.Control.AddFile('J', new DateTime(2026, 10, 4, 18, 35, 0), TestPictures.Jpeg(120));
+        await app.ConnectedAsync();
+        await TestApp.EventuallyAsync(() => app.Controller.State.HoldsLivePicture);
+        shell.GoCommand.Execute(Page.Library);
+        shell.Library.RefreshCommand.Execute(null);
+        await TestApp.EventuallyAsync(() => shell.Library.Items.Count == 1 && shell.Library.Idle);
+
+        shell.GoCommand.Execute(Page.Live);
+
+        await TestApp.EventuallyAsync(() => app.Controller.State.Live is LiveView.Unavailable);
+        shell.Live.Message.ShouldBe("No live picture until the camera is switched off and on. It gives one each time it starts.");
     }
 
     [AvaloniaFact]

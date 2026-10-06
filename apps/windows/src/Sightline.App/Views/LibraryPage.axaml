@@ -13,7 +13,7 @@
       </StackPanel>
 
       <WrapPanel Grid.Row="1" Margin="0,14,0,14" ItemSpacing="10" LineSpacing="10">
-        <Button Content="Read the card" Command="{Binding RefreshCommand}" />
+        <Button Name="ReadCard" Content="Read the card" Command="{Binding RefreshCommand}" />
         <Button Content="Select all" Command="{Binding SelectAllCommand}" />
         <Button Content="Select none" Command="{Binding SelectNoneCommand}" />
         <Button Name="Copy" Classes="primary" Content="{Binding CopyLabel}" Command="{Binding CopyCommand}" />

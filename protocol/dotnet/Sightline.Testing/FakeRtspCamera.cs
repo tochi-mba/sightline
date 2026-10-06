@@ -8,11 +8,19 @@ namespace Sightline.Testing;
 /// The camera's RTSP server on port 8080, needing no hardware.
 /// </summary>
 /// <remarks>
+/// <para>
 /// It behaves as the reference camera was measured to: it answers DESCRIBE with the real SDP and a
 /// body length, SETUP with a session made of one byte repeated, and after PLAY it sends bare RTP
 /// with no interleaved framing — but only once the control channel has started the stream, which
 /// is what <see cref="StreamStarted"/> asks. Until then, and after the last frame unless told to
 /// close, it simply goes quiet, as the real one does.
+/// </para>
+/// <para>
+/// Like the real one it cannot be stopped: TEARDOWN answers 501 and PAUSE answers 200, and the
+/// pictures keep coming either way. Only the camera can end it, which <see cref="HangUp"/> does as
+/// browse mode does on the real camera. That the camera answers just one connection per power-on is
+/// the business of whoever hands these out; <see cref="NeverAnswers"/> is how a refused one looks.
+/// </para>
 /// </remarks>
 public sealed class FakeRtspCamera : ICameraTransport
 {
@@ -22,6 +30,7 @@ public sealed class FakeRtspCamera : ICameraTransport
         + "m=video 0 RTP/AVP 26\r\na=control:track0\r\nm=audio 0 RTP/AVP 97\r\na=rtpmap:97 L16/16000/1\r\na=control:track1\r\n";
 
     private readonly Queue<byte[]> outbox = new();
+    private readonly TaskCompletionSource hungUp = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly HashSet<byte[]> paced = new(ReferenceEqualityComparer.Instance);
     private ushort sequence;
 
@@ -34,6 +43,9 @@ public sealed class FakeRtspCamera : ICameraTransport
     /// <summary>Bytes sent after PLAY before any packet: noise that is not RTP at all.</summary>
     public byte[]? NoiseAfterPlay { get; set; }
 
+    /// <summary>When set, reading after the last frame fails with this, as a connection that drops does.</summary>
+    public Exception? BreaksWith { get; set; }
+
     /// <summary>When set, the connection closes after the last frame instead of going quiet.</summary>
     public bool ClosesAfterFrames { get; set; }
 
@@ -45,9 +57,6 @@ public sealed class FakeRtspCamera : ICameraTransport
 
     /// <summary>A verb the camera never answers, to stand for a wedged server.</summary>
     public string? NeverAnswers { get; set; }
-
-    /// <summary>When set, a TEARDOWN fails the way a dropped connection does.</summary>
-    public bool TeardownFails { get; set; }
 
     /// <summary>How long each picture takes to arrive after the one before, as the real camera's dozen a second do.</summary>
     public TimeSpan Pace { get; set; }
@@ -105,11 +114,11 @@ public sealed class FakeRtspCamera : ICameraTransport
 
                 break;
             case "TEARDOWN":
-                if (TeardownFails)
-                {
-                    throw new IOException("The connection was reset.");
-                }
-
+                // Listed by OPTIONS, and not implemented: the stream carries on regardless.
+                Reply(501, "");
+                break;
+            case "PAUSE":
+                // Answered, and ignored.
                 Reply(200, "");
                 break;
             default:
@@ -125,13 +134,19 @@ public sealed class FakeRtspCamera : ICameraTransport
     {
         if (outbox.Count == 0)
         {
-            if (ClosesAfterFrames && Verbs.Contains("PLAY"))
+            if (BreaksWith is { } broken && Verbs.Contains("PLAY"))
+            {
+                throw broken;
+            }
+
+            if ((ClosesAfterFrames && Verbs.Contains("PLAY")) || hungUp.Task.IsCompleted)
             {
                 return 0;
             }
 
-            // Quiet: nothing comes until whoever is reading gives up.
-            await Task.Delay(Timeout.Infinite, cancellationToken).ConfigureAwait(false);
+            // Quiet: nothing comes until whoever is reading gives up, or the camera hangs up.
+            await hungUp.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return 0;
         }
 
         if (Pace > TimeSpan.Zero && paced.Remove(outbox.Peek()))
@@ -157,6 +172,13 @@ public sealed class FakeRtspCamera : ICameraTransport
         return take;
     }
 
+    /// <summary>The camera ends the connection, as entering browse mode does: what is in flight is dropped.</summary>
+    public void HangUp()
+    {
+        outbox.Clear();
+        hungUp.TrySetResult();
+    }
+
     /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
@@ -166,7 +188,7 @@ public sealed class FakeRtspCamera : ICameraTransport
 
     private void Reply(int status, string body, (string Name, string Value)? header = null)
     {
-        var text = new StringBuilder($"RTSP/1.0 {status} {(status == 200 ? "OK" : "Error")}\r\nCSeq: 1\r\n");
+        var text = new StringBuilder($"RTSP/1.0 {status} {status switch { 200 => "OK", 501 => "Not Implemented", _ => "Error" }}\r\nCSeq: 1\r\n");
         if (header is { } h)
         {
             text.Append(h.Name).Append(": ").Append(h.Value).Append("\r\n");

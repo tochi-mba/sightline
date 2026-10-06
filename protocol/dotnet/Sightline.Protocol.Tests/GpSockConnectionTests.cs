@@ -217,14 +217,12 @@ public sealed class GpSockConnectionTests
     }
 
     [Fact]
-    public async Task A_thumbnail_is_refused_while_the_camera_is_still_streaming()
+    public async Task A_thumbnail_is_refused_while_the_camera_is_streaming()
     {
-        var (connection, _) = await OpenAsync(c =>
-        {
-            AddFiles(c, 2);
-            c.IsStreaming = true;
-        });
+        // Browse mode stops the stream; starting it again there is what leaves the camera busy.
+        var (connection, _) = await OpenAsync(c => AddFiles(c, 2));
         await connection.SetModeAsync(CameraMode.Browse, CancellationToken.None);
+        await connection.StartStreamingAsync(CancellationToken.None);
 
         var refused = await Should.ThrowAsync<GpSockRefusedException>(
             () => connection.GetThumbnailAsync(1, CancellationToken.None));
