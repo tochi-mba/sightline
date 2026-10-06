@@ -141,10 +141,33 @@ across four power cycles:
   which is another reason not to keep asking.
 - TCP 8082 answers nothing: not HTTP, not RTSP, not a `GPSOCKET` frame.
 
-What a client has to do, then: open the stream once per camera session and never close it while
-connected; read it continuously, so the camera is never left blocked writing; share it between
-everything that wants a picture; warn before anything that needs browse mode; and once the stream
-is gone, say that the camera needs switching off and on instead of trying again.
+### Once the stream ends, the camera's buttons stop working (measured 2026-10-06)
+
+After its stream has run, **the camera's own buttons and screen stop responding**, stuck on the
+Wi-Fi name and password screen, until its battery is taken out and put back. Its network side
+carries on answering: status, mode changes, the card and thumbnails all still work.
+
+| Session | Live picture | Buttons after |
+| --- | --- | --- |
+| List the card | No | Working |
+| Thumbnails of seven files, photos and videos | No | Working |
+| Thumbnail of a clip under a second long | No | Working |
+| Download a photo and a clip, delete the clip | No | Working |
+| Stream, then browse the card while it flows | Yes | **Frozen** |
+| Stream, close our connection, browse, ask for a second stream | Yes | **Frozen** |
+| Stream, close our connection, read the status, disconnect | Yes | **Frozen** |
+
+- `PowerOff` (0x0003) is acknowledged by a frozen camera and ignored: it does not switch itself off.
+- Ending the stream by leaving the camera's Wi-Fi while it still flows has not been tried.
+- The same fault is the likeliest reason a second stream is never answered: the stream task does
+  not survive its first stream ending, and the buttons wait on it.
+- The camera's clock goes back to 1 January 2024 whenever it loses power.
+
+What a client has to do, then: start the stream only when the person asks for the picture, saying
+first what it costs; open it once per camera session and never close it while connected; read it
+continuously, so the camera is never left blocked writing; share it between everything that wants a
+picture; and once it has run, say that the camera needs its battery taken out and put back, both
+to show its picture again and to answer its own buttons.
 
 ## Open questions
 

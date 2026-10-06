@@ -35,7 +35,9 @@ connections ask for exactly that camera, which Android grants without asking aga
 `CameraController` (in `:android:core`) is the camera as the app drives it. Its rules, each with tests:
 
 - One camera operation at a time, because they share one control channel and some switch its mode.
-- The card is read with the live picture paused, because the camera refuses to do both.
+- The live picture starts only when the person asks, and its one stream is kept for the whole
+  connection: the camera answers one stream per power-on, and its own buttons stay stuck once it has
+  run. Reading the card ends it, so a screen that reads the card says so first. See PROTOCOL.md.
 - Every request has a deadline and every download a stall detector: a half-asleep camera accepts a
   connection and then answers nothing.
 - A setting is read back after it is written, because the camera acknowledges values it ignores.
