@@ -167,9 +167,8 @@ public sealed class PreferencesStore
         current = Read(path);
     }
 
-    /// <summary>Where Sightline keeps them for this person: %LOCALAPPDATA%\Sightline\preferences.json.</summary>
-    public static string DefaultPath { get; } = System.IO.Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sightline", "preferences.json");
+    /// <summary>Where Sightline keeps them for this person: preferences.json in <see cref="DataFolder"/>.</summary>
+    public static string DefaultPath { get; } = System.IO.Path.Combine(DataFolder.Path, "preferences.json");
 
     /// <summary>Where they are kept.</summary>
     public string Path => path;

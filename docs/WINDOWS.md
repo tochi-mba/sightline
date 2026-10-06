@@ -25,7 +25,8 @@ Closing the window while a camera is connected or Sentry is armed leaves Sightli
 
 `tools/scripts/package.ps1` builds every download; `docs/RELEASING.md` says how they are published.
 
-- `Sightline-Setup.exe` installs for one person, with no administrator: the Start menu, an entry in Installed apps with an uninstaller, and the install folder appended to that person's PATH so `sightline` works in any terminal. Uninstalling removes exactly that PATH entry and nothing else.
+- `Sightline-Setup.exe` installs for one person, with no administrator: the Start menu, an entry in Installed apps with an uninstaller, and the install folder appended to that person's PATH so `sightline` works in any terminal. Uninstalling removes exactly that PATH entry and nothing else, leaving the PATH's text as it was.
+- The installer owns `%LOCALAPPDATA%\Sightline` and deletes it on uninstall, so Sightline keeps its settings elsewhere, in `%LOCALAPPDATA%\REX Technologies\Sightline`, where they survive both updates and uninstalling. Copies of the camera's photos and videos go to Downloads.
 - An installed copy looks for a newer version when it opens, if the person allows it, downloads it quietly, and installs it with a restart the person chooses, never while the camera records or Sentry is armed. A rolling install follows rolling builds; a tagged install follows tags.
 - Installing, updating and uninstalling first ask a running copy to quit, through the same channel a second start uses to show it, so it leaves its camera and puts its adapter back.
 - `Sightline-Portable.exe` runs from anywhere and installs nothing; it cannot update itself, so it points to the download page instead.

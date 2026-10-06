@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Sightline.Core.Connectivity;
+using Sightline.Core.Settings;
 
 namespace Sightline.Cli;
 
@@ -14,9 +15,8 @@ namespace Sightline.Cli;
 /// </remarks>
 internal sealed class LinkStateStore(string path)
 {
-    /// <summary>The store in the current user's local application data.</summary>
-    public static LinkStateStore Default { get; } = new(Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Sightline", "cli-link.json"));
+    /// <summary>The store in Sightline's data folder, which uninstalling does not touch.</summary>
+    public static LinkStateStore Default { get; } = new(Path.Combine(DataFolder.Path, "cli-link.json"));
 
     /// <summary>The saved state, or null when there is none or it cannot be read.</summary>
     public LinkState? Load()

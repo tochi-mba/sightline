@@ -143,6 +143,17 @@ public sealed class PreferencesTests : IDisposable
     {
         Should.Throw<ArgumentException>(() => new PreferencesStore(" "));
         Should.Throw<ArgumentNullException>(() => new PreferencesStore(File).Update(null!));
-        PreferencesStore.DefaultPath.ShouldEndWith(Path.Combine("Sightline", "preferences.json"));
+    }
+
+    [Fact]
+    public void Settings_are_kept_outside_the_folder_uninstalling_deletes()
+    {
+        // Found on 2026-10-06: the installer's folder, %LOCALAPPDATA%\Sightline, was also the settings folder,
+        // so uninstalling deleted the person's settings without asking.
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var installFolder = Path.Combine(local, "Sightline");
+
+        PreferencesStore.DefaultPath.ShouldBe(Path.Combine(local, "REX Technologies", "Sightline", "preferences.json"));
+        PreferencesStore.DefaultPath.ShouldNotStartWith(installFolder + Path.DirectorySeparatorChar);
     }
 }
