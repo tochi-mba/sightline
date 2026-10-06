@@ -32,12 +32,14 @@ protocol as measured on real hardware.
 
 | Command | What it does |
 | --- | --- |
-| `dotnet build Sightline.slnx` | Builds the protocol, core and command line. |
-| `dotnet test Sightline.slnx` | Runs every .NET test. |
+| `dotnet build Sightline.slnx` | Builds the protocol, the core, the Windows app and the command line. |
+| `dotnet test Sightline.slnx` | Runs every .NET test, the Windows window's headless tests included. See `docs/WINDOWS.md`. |
 | `./gradlew :protocol:check` | Lints and tests the Kotlin protocol, and holds it to 100% line and branch coverage. |
 | `./gradlew :android:core:check` | Lints and tests the Android app's logic, at 100% of lines and branches. |
 | `./gradlew :android:app:check` | Lints and tests the Android app under Robolectric: logic at 100%, screens at 99% of lines. See `docs/ANDROID.md`. |
 | `./gradlew :android:app:assembleDebug` | Builds the debug APK. |
+| `./tools/scripts/package.ps1` | Builds the Windows installer, portable app, command line and update feed into `dist/windows`. |
+| `python tools/scripts/release_version.py` | The version a release build is stamped with. See `docs/RELEASING.md`. |
 | `./tools/scripts/bench.ps1` | Runs the benchmark suite and compares it with the baseline; `-Record` replaces the baseline. See `docs/PERFORMANCE.md`. |
 | `python -m unittest discover tools/scripts/tests` | Tests the repository's own scripts: the site checker, the benchmark comparison and the icon generator, and holds the committed icon to the generator. |
 | `python tools/scripts/generate_icon.py` | Redraws the Windows icon from the site's favicon geometry. Never edit the `.ico` by hand. |
