@@ -117,12 +117,40 @@ still shows the right options. The reference document is
   with no sequence gaps over TCP across 218 packets.
 - The camera burns a date and time into the picture, and its clock was about two years wrong.
 
+### One stream per power-on (measured 2026-10-06)
+
+The RTSP server answers **the first TCP connection it accepts after the camera is switched on, and
+no other**. Every rule below follows from that, and each was observed on the reference camera
+across four power cycles:
+
+- **A second connection is never answered.** It connects, and its `DESCRIBE` gets no reply, for as
+  long as the camera stays on. Closing the first connection first does not help, whether it was
+  closed with a `TEARDOWN`, without one, or by the camera itself.
+- **`TEARDOWN` answers `501 Not Implemented`**, although `OPTIONS` lists it, and the stream keeps
+  coming. **`PAUSE` answers `200 OK` and the stream keeps coming.** Neither can stop the picture.
+- **The one connection can be used again.** A fresh `DESCRIBE`, `SETUP` and `PLAY` on it works
+  after an earlier `PLAY` there. The reply arrives inside the RTP still flowing on the connection.
+- **`SetMode(browse)` makes the camera hang up the stream connection at once**, and the card can
+  only be listed in browse mode: in record mode `PlaybackGetFileList` is refused with a mode
+  error, and asking for a thumbnail made the camera drop its Wi-Fi. `PlaybackGetFileCount` works
+  in any mode. So **looking at the card ends the live picture until the camera is switched off
+  and on**.
+- Reading the menu, `RestartStreaming`, a new control session, waiting for the mode to settle, and
+  the camera's Wi-Fi dropping and coming back do not bring the stream server back. Only the camera
+  restarting does; it twice restarted by itself while requests to the stuck server were waiting,
+  which is another reason not to keep asking.
+- TCP 8082 answers nothing: not HTTP, not RTSP, not a `GPSOCKET` frame.
+
+What a client has to do, then: open the stream once per camera session and never close it while
+connected; read it continuously, so the camera is never left blocked writing; share it between
+everything that wants a picture; warn before anything that needs browse mode; and once the stream
+is gone, say that the camera needs switching off and on instead of trying again.
+
 ## Open questions
 
-- **Reading the menu before starting the stream leaves RTSP unanswered.** After
-  `GetParameterFile`, a `DESCRIBE` on 8080 times out — with or without `RestartStreaming`, and even
-  after `SetMode(record)` restores mode 0. Starting the stream with no menu read beforehand works.
-  Under investigation; until it is understood, the app starts the picture before reading the menu.
+- How the camera's clock is set. The menu's `Date/Time` item (0x0205) only chooses how the date
+  is written; NAK code −13 suggests a time command exists, but nothing seen so far names it, and
+  commands are not guessed at on a real camera.
 - Whether `RestartStreaming` is ever needed on this firmware: the stream was received without it.
 - What TCP 8082 is.
 - The meaning of status bytes 2 and 4–15.
