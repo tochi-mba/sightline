@@ -91,7 +91,8 @@ fun SentryScreen(graph: AppGraph, platform: Platform, camera: CameraState) {
                     RexText(
                         text =
                         "Sightline watches the camera's picture for movement, with your screen off, and tells you " +
-                            "when something moves. Nothing leaves your phone.",
+                            "when something moves. Nothing leaves your phone. Arming starts the live picture: once " +
+                            "it has run, the camera's own buttons stay stuck until its battery is taken out and put back.",
                         style = RexType.BodyMedium,
                     )
                     RexText(text = summary, style = RexType.BodySmall)
