@@ -52,7 +52,7 @@ internal static class Program
             {
                 "adapters" => Adapters(),
                 "connect" => await Connect(options, cancel.Token),
-                "disconnect" => await Disconnect(),
+                "disconnect" => await Disconnect(options),
                 "status" => await WithCamera(Status, cancel.Token),
                 "settings" => await WithCamera(Settings, cancel.Token),
                 "files" => await WithCamera(Files, cancel.Token),
@@ -261,7 +261,7 @@ internal static class Program
             return ExitCode.Usage;
         }
 
-        var link = new CameraLink(wlan, network);
+        var link = new CameraLink(wlan, network) { Trace = TraceFor(options) };
         Console.WriteLine($"  Joining {ssid} on {choice.Adapter.Name}...");
         try
         {
@@ -278,7 +278,7 @@ internal static class Program
         }
     }
 
-    private static async Task<int> Disconnect()
+    private static async Task<int> Disconnect(Options options)
     {
         var store = LinkStateStore.Default;
         if (store.Load() is not { } state)
@@ -287,13 +287,23 @@ internal static class Program
             return ExitCode.Success;
         }
 
-        var link = new CameraLink(new WindowsWlanClient(), new SystemNetworkState(CameraAddress.Default));
+        var link = new CameraLink(new WindowsWlanClient(), new SystemNetworkState(CameraAddress.Default))
+        {
+            Trace = TraceFor(options),
+        };
         link.Resume(state);
         var restored = await link.LeaveAsync();
         store.Clear();
         Console.WriteLine(restored is null
             ? $"  Left the camera on {state.AdapterName}."
             : $"  Left the camera; {state.AdapterName} is back on {restored}.");
+        if (link.ProfileLeftBehind is { } profile)
+        {
+            // It holds the camera's password; say so, and how to remove it by hand.
+            Error($"Windows would not delete the saved network '{profile}'. To remove it:");
+            Console.Error.WriteLine($"    netsh wlan delete profile name=\"{profile}\" interface=\"{state.AdapterName}\"");
+        }
+
         return ExitCode.Success;
     }
 
@@ -303,6 +313,10 @@ internal static class Program
         PrintHelp();
         return ExitCode.Usage;
     }
+
+    /// <summary>With --verbose, each Wi-Fi step goes to standard error as it happens.</summary>
+    private static Action<string>? TraceFor(Options options) =>
+        options.Has("--verbose") ? line => Console.Error.WriteLine($"  · {line}") : null;
 
     private static void Error(string message) => Console.Error.WriteLine($"  {message}");
 
@@ -320,8 +334,9 @@ internal static class Program
 
               Getting on the camera's Wi-Fi (Windows)
                 adapters                          Which Wi-Fi adapter the camera would use, and why
-                connect [--ssid NAME] [--password P] [--adapter A] [--yes]
-                disconnect                        Leave the camera and put the adapter back
+                connect [--ssid NAME] [--password P] [--adapter A] [--yes] [--verbose]
+                disconnect [--verbose]            Leave the camera and put the adapter back
+                                                  --verbose prints each Wi-Fi step as it happens
 
               Talking to the camera
                 status                            Mode, recording, power

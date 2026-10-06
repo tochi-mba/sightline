@@ -276,6 +276,35 @@ public sealed class CameraLinkTests
     }
 
     [Fact]
+    public async Task A_profile_windows_would_not_delete_is_named_so_the_password_is_not_left_unsaid()
+    {
+        network.Addresses[DongleId] = [Leased];
+        var link = Link();
+        await link.JoinAsync(Choose(Dongle()), Camera, "12345678", false, CameraAddress, CancellationToken.None);
+        wlan.Failing.Add("delete");
+
+        await link.LeaveAsync();
+
+        link.ProfileLeftBehind.ShouldBe(Ours);
+    }
+
+    [Fact]
+    public async Task A_clean_leave_clears_an_earlier_leftover_profile()
+    {
+        network.Addresses[DongleId] = [Leased];
+        var link = Link();
+        await link.JoinAsync(Choose(Dongle()), Camera, "12345678", false, CameraAddress, CancellationToken.None);
+        wlan.Failing.Add("delete");
+        await link.LeaveAsync();
+        wlan.Failing.Clear();
+        await link.JoinAsync(Choose(Dongle()), Camera, "12345678", false, CameraAddress, CancellationToken.None);
+
+        await link.LeaveAsync();
+
+        link.ProfileLeftBehind.ShouldBeNull();
+    }
+
+    [Fact]
     public async Task Leaving_quietly_works_without_anyone_listening()
     {
         network.Addresses[BuiltInId] = [Leased];

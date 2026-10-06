@@ -101,6 +101,15 @@ public sealed class CameraLink
     public WifiAdapter? Adapter => adapter;
 
     /// <summary>
+    /// Sightline's profile that the last <see cref="LeaveAsync"/> could not delete, or null when there is none.
+    /// </summary>
+    /// <remarks>
+    /// The profile holds the camera's password, so a failure to remove it is said out loud rather than
+    /// only traced: whoever is leaving can tell the person, and how to delete it themselves.
+    /// </remarks>
+    public string? ProfileLeftBehind { get; private set; }
+
+    /// <summary>
     /// Everything leaving needs to know, while joined; null otherwise.
     /// </summary>
     /// <remarks>
@@ -205,6 +214,7 @@ public sealed class CameraLink
         }
 
         var restored = (string?)null;
+        ProfileLeftBehind = null;
         if (connectedByUs)
         {
             Attempt($"disconnect {joined.Name}", () => wlan.Disconnect(joined.Id));
@@ -212,7 +222,10 @@ public sealed class CameraLink
 
         if (savedProfile is { } profile)
         {
-            Attempt($"delete profile '{profile}' from {joined.Name}", () => wlan.DeleteProfile(joined.Id, profile));
+            if (!Attempt($"delete profile '{profile}' from {joined.Name}", () => wlan.DeleteProfile(joined.Id, profile)))
+            {
+                ProfileLeftBehind = profile;
+            }
         }
 
         if (previous is { } restore)
@@ -239,16 +252,19 @@ public sealed class CameraLink
         return restored;
     }
 
-    private void Attempt(string step, Action action)
+    /// <summary>Runs one step of leaving, traces how it went, and says whether it worked.</summary>
+    private bool Attempt(string step, Action action)
     {
         try
         {
             action();
             Trace?.Invoke($"{step}: done");
+            return true;
         }
         catch (WlanException exception)
         {
             Trace?.Invoke($"{step}: failed ({exception.Message})");
+            return false;
         }
     }
 
