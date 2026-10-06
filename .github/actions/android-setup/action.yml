@@ -1,0 +1,27 @@
+# The Android toolchain, and nothing else: what to check is said in each workflow.
+name: Android setup
+description: Installs the JDK, Gradle and the Android SDK this repository builds against.
+
+runs:
+  using: composite
+  steps:
+    - name: Install JDK 17
+      uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      with:
+        distribution: temurin
+        java-version: '17'
+
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+
+    # `packages` is set because the action's default asks for the legacy `tools` package, which Google
+    # has removed: the default fails before anything is built. The platform and build tools are named below.
+    - name: Install the Android SDK
+      uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+      with:
+        packages: platform-tools
+
+    # pwsh rather than bash, so this works on a Windows runner too, where sdkmanager is a .bat file.
+    - name: Install the platform and build tools
+      shell: pwsh
+      run: sdkmanager "platforms;android-36" "build-tools;36.0.0"

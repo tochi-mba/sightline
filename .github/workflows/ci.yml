@@ -1,0 +1,191 @@
+# Every check this repository has, run the way a laptop runs them (AGENTS.md lists the same commands).
+#
+# One workflow with one required check, ci-ok. The jobs split by toolchain: the .NET half needs a Windows
+# runner, the Android half does not, and a change to one should not pay for the other.
+#
+# Every action is pinned to a commit: a tag can be moved to different code after it was reviewed.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # A newer push supersedes a pull request's run. A run on main or a tag is never cancelled: its result is
+  # what the release workflows and the branch rule read.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Which halves a pull request touches. On main, a tag or a dispatch, all of them: those runs decide what
+  # is published, and a filter that guessed wrong there would publish something nothing had checked.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      windows: ${{ steps.decide.outputs.windows }}
+      android: ${{ steps.decide.outputs.android }}
+      site: ${{ steps.decide.outputs.site }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            # What every half stands on is in every list: a change to any of it can break any half.
+            shared: &shared
+              - 'protocol/**'
+              - 'VERSION'
+              - 'tools/scripts/**'
+              - '.editorconfig'
+              - '.github/workflows/ci.yml'
+            windows:
+              - *shared
+              - 'apps/windows/**'
+              - '*.slnx'
+              - 'Directory.*.props'
+              - 'Directory.Build.targets'
+              - 'NuGet.config'
+              - 'global.json'
+              - '.config/**'
+            android:
+              - *shared
+              - 'apps/android/**'
+              - 'gradle/**'
+              - 'gradlew'
+              - 'gradlew.bat'
+              - '*.gradle.kts'
+              - 'gradle.properties'
+              - 'tools/build-logic/**'
+              - '.github/actions/android-setup/action.yml'
+            site:
+              - *shared
+              - 'site/**'
+
+      - id: decide
+        env:
+          IS_PULL_REQUEST: ${{ github.event_name == 'pull_request' }}
+          WINDOWS: ${{ steps.filter.outputs.windows }}
+          ANDROID: ${{ steps.filter.outputs.android }}
+          SITE: ${{ steps.filter.outputs.site }}
+        run: |
+          set -euo pipefail
+          for half in windows android site; do
+            value=true
+            if [ "$IS_PULL_REQUEST" = "true" ]; then
+              case "$half" in
+                windows) value="${WINDOWS:-false}" ;;
+                android) value="${ANDROID:-false}" ;;
+                site) value="${SITE:-false}" ;;
+              esac
+            fi
+            echo "$half=$value" >> "$GITHUB_OUTPUT"
+            echo "$half: $value"
+          done
+
+  # The protocol, the core, the Windows app and the command line, and the scripts they are packaged with.
+  windows:
+    needs: changes
+    if: needs.changes.outputs.windows == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build and test every .NET project
+        run: dotnet test Sightline.slnx --configuration Release
+
+      - name: Test the repository's scripts, and hold the icon to its generator
+        run: python -m unittest discover -s tools/scripts/tests
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-test-reports
+          path: '**/TestResults/**'
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # The Kotlin protocol and the Android app, at their coverage floors, and the debug APK.
+  android:
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ./.github/actions/android-setup
+
+      - name: Check the protocol and the app, and build the debug APK
+        run: ./gradlew :protocol:check :android:core:check :android:design:check :android:app:check :android:app:assembleDebug --console plain
+
+      # So a reviewer can install the branch on a real phone instead of taking the diff's word for it.
+      - name: Upload the debug APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sightline-debug-apk
+          path: apps/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-test-reports
+          path: |
+            apps/android/*/build/reports/**
+            apps/android/*/build/test-results/**
+            protocol/kotlin/build/reports/**
+            protocol/kotlin/build/test-results/**
+          retention-days: 7
+          if-no-files-found: ignore
+
+  site:
+    needs: changes
+    if: needs.changes.outputs.site == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check the site
+        run: python tools/scripts/check_site.py
+
+      - name: Test the page's script
+        run: node --test --experimental-test-coverage site/tests
+
+  # The one check to require on main. A job skipped because its half was untouched counts as passed; one
+  # that failed or was cancelled does not, and always() is what makes this run at all in that case.
+  ci-ok:
+    needs: [changes, windows, android, site]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Report
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$RESULTS"
+          if echo "$RESULTS" | grep -q '"result": *"\(failure\|cancelled\)"'; then
+            echo "At least one check did not pass." >&2
+            exit 1
+          fi
+          echo "Every check that ran passed."
