@@ -47,10 +47,13 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
                 android.buildTypes.getByName("release").signingConfig = android.signingConfigs.getByName("release")
             }
 
+            // The name under the icon. A debug build installs beside the release one, so it says which it is.
+            android.defaultConfig.manifestPlaceholders["appLabel"] = "Sightline"
             android.buildTypes {
                 getByName("debug") {
                     applicationIdSuffix = ".debug"
                     versionNameSuffix = "-debug"
+                    manifestPlaceholders["appLabel"] = "Sightline Debug"
                 }
                 getByName("release") {
                     isMinifyEnabled = true

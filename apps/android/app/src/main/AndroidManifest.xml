@@ -28,7 +28,7 @@
       android:allowBackup="false"
       android:dataExtractionRules="@xml/data_extraction_rules"
       android:icon="@drawable/ic_launcher"
-      android:label="Sightline"
+      android:label="${appLabel}"
       android:supportsRtl="true"
       android:theme="@style/Theme.Sightline">
     <activity
