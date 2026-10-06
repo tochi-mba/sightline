@@ -152,16 +152,21 @@ private fun Places(graph: AppGraph, platform: Platform) {
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wide = maxWidth >= WIDE
+        // A phone on its side is wide but short: the rail narrows so the camera's picture can have the height.
+        val short = maxHeight < SHORT
         if (wide) {
             Row(Modifier.fillMaxSize()) {
-                NavigationList(stack.current, vertical = true, Modifier.width(132.dp).fillMaxHeight()) {
-                    go(stack.select(it))
-                }
-                Box(Modifier.weight(1f)) { Place(stack.current, graph, platform, wide) }
+                NavigationList(
+                    stack.current,
+                    vertical = true,
+                    Modifier.width(if (short) 88.dp else 132.dp).fillMaxHeight(),
+                    compact = short,
+                ) { go(stack.select(it)) }
+                Box(Modifier.weight(1f)) { Place(stack.current, graph, platform, wide, short) }
             }
         } else {
             Column(Modifier.fillMaxSize()) {
-                Box(Modifier.weight(1f)) { Place(stack.current, graph, platform, wide) }
+                Box(Modifier.weight(1f)) { Place(stack.current, graph, platform, wide, short) }
                 NavigationList(stack.current, vertical = false, Modifier.fillMaxWidth()) { go(stack.select(it)) }
             }
         }
@@ -169,19 +174,28 @@ private fun Places(graph: AppGraph, platform: Platform) {
 }
 
 @Composable
-private fun Place(destination: Destination, graph: AppGraph, platform: Platform, wide: Boolean) {
+private fun Place(destination: Destination, graph: AppGraph, platform: Platform, wide: Boolean, short: Boolean) {
     val camera by graph.controller.state.collectAsState()
     when (destination) {
-        Destination.Live -> LiveScreen(graph, platform, camera, wide)
+        Destination.Live -> LiveScreen(graph, platform, camera, wide, short)
         Destination.Library -> LibraryScreen(graph, camera)
         Destination.Sentry -> SentryScreen(graph, platform, camera)
         Destination.Settings -> SettingsScreen(graph, platform, camera)
     }
 }
 
-/** The four places, as a bar or a rail. The current one is marked in Signal and announced as selected. */
+/**
+ * The four places, as a bar or a rail. The current one is marked in Signal and announced as selected. A
+ * [compact] rail, on a short screen, keeps its labels in less room.
+ */
 @Composable
-private fun NavigationList(current: Destination, vertical: Boolean, modifier: Modifier, select: (Destination) -> Unit) {
+private fun NavigationList(
+    current: Destination,
+    vertical: Boolean,
+    modifier: Modifier,
+    compact: Boolean = false,
+    select: (Destination) -> Unit,
+) {
     val items: @Composable (Modifier) -> Unit = { itemModifier ->
         Destination.entries.forEach { destination ->
             val chosen = destination == current
@@ -204,8 +218,8 @@ private fun NavigationList(current: Destination, vertical: Boolean, modifier: Mo
 
     if (vertical) {
         Column(
-            modifier.background(RexColors.Panel).padding(vertical = RexSpace.Large),
-            verticalArrangement = Arrangement.spacedBy(RexSpace.Small),
+            modifier.background(RexColors.Panel).padding(vertical = if (compact) RexSpace.Compact else RexSpace.Large),
+            verticalArrangement = Arrangement.spacedBy(if (compact) RexSpace.Tiny else RexSpace.Small),
         ) { items(Modifier.fillMaxWidth()) }
     } else {
         Row(modifier.background(RexColors.Panel).padding(vertical = RexSpace.Tiny)) { items(Modifier.weight(1f)) }
@@ -222,3 +236,6 @@ fun labelFor(destination: Destination): String = when (destination) {
 
 /** From this width a rail down the side replaces the bar along the bottom. */
 private val WIDE = 600.dp
+
+/** Below this height the screen is a phone on its side, and every bit of height goes to the picture. */
+private val SHORT = 480.dp

@@ -277,6 +277,37 @@ class LiveScreenTest {
     }
 
     @Test
+    @Config(qualifiers = "w853dp-h384dp")
+    fun `a phone on its side gives the picture the height, and the hud keeps to its edges`() {
+        // The reference phone turned on its side: wide, but too short for the controls under the picture.
+        test.link.stream = {
+            frames += List(10) { TestGraph.picture() }
+            closesAfterFrames = true
+        }
+        test.connected()
+        show()
+        settle()
+        compose.onNodeWithContentDescription("Start recording").assertExists()
+        compose.onNodeWithText("LEAVE").assertExists()
+
+        platform.grants = true
+        compose.onNodeWithText("HUD").performClick()
+        test.graph.settings[AppSettings.Layout] = HudLayout.Cockpit
+        settle()
+        compose.onNodeWithText("Waiting for GPS").assertExists()
+        compose.onNodeWithText("TOP SPEED").assertExists()
+
+        // A picture that has stopped still says why with the HUD on.
+        compose.onNodeWithText("SHOW THE LIVE PICTURE").performClick()
+        test.until { it.live is LiveView.Unavailable }
+        compose.waitForIdle()
+        compose.onNodeWithText(
+            "The live picture has ended. Take the camera's battery out and put it back to see it again.",
+            ignoreCase = true,
+        ).assertExists()
+    }
+
+    @Test
     @Config(qualifiers = "w900dp-h500dp")
     fun `a wide screen puts the controls beside the picture`() {
         test.connected()

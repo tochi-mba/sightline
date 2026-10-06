@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -55,12 +56,19 @@ import java.util.Locale
 /** Who holds the live view open while this screen shows it. */
 private const val LIVE_HOLDER = "live-screen"
 
+/** How wide the control strip beside the picture is on a phone turned on its side. */
+private val STRIP = 152.dp
+
 /**
  * The camera's picture and its controls, or, before a camera is connected, what connecting will do and
  * the button that does it.
+ *
+ * Upright, the controls sit under the picture; on a [wide] screen, beside it. A phone on its side is wide
+ * but [short]: there the controls stack in a narrow strip, like a camera app's, so the picture gets the
+ * whole height.
  */
 @Composable
-fun LiveScreen(graph: AppGraph, platform: Platform, camera: CameraState, wide: Boolean) {
+fun LiveScreen(graph: AppGraph, platform: Platform, camera: CameraState, wide: Boolean, short: Boolean = false) {
     val connection = camera.connection
     if (connection != Connection.Connected && connection !is Connection.Reconnecting) {
         ConnectPanel(graph, platform, camera)
@@ -84,31 +92,38 @@ fun LiveScreen(graph: AppGraph, platform: Platform, camera: CameraState, wide: B
     val picture: @Composable (Modifier) -> Unit = { modifier ->
         Box(modifier) {
             LivePicture(graph.controller.frames, settings, Modifier.fillMaxSize())
-            PictureOverlays(camera, settings) { graph.controller.showLivePicture() }
+            // The HUD under the badges: a picture that has stopped still says why with the HUD on.
             if (hudOn) {
                 HudOverlay(graph, Modifier.fillMaxSize())
             }
+            PictureOverlays(camera, settings, hudOn) { graph.controller.showLivePicture() }
         }
     }
-    val controls: @Composable (Modifier) -> Unit = { modifier ->
+    val controls: @Composable (Modifier, Boolean) -> Unit = { modifier, stacked ->
         Controls(
             graph = graph,
             camera = camera,
             hudOn = hudOn,
             onHud = { if (hudOn) hudOn = false else platform.withLocationPermission { hudOn = true } },
+            stacked = stacked,
             modifier = modifier,
         )
     }
 
-    if (wide) {
-        Row(Modifier.fillMaxSize()) {
-            picture(Modifier.weight(1f).fillMaxSize())
-            controls(Modifier.width(300.dp).padding(RexSpace.Medium))
+    when {
+        wide && short -> Row(Modifier.fillMaxSize()) {
+            picture(Modifier.weight(1f).fillMaxHeight())
+            controls(Modifier.width(STRIP).fillMaxHeight().padding(horizontal = RexSpace.Compact), true)
         }
-    } else {
-        Column(Modifier.fillMaxSize()) {
+
+        wide -> Row(Modifier.fillMaxSize()) {
+            picture(Modifier.weight(1f).fillMaxSize())
+            controls(Modifier.width(300.dp).padding(RexSpace.Medium), false)
+        }
+
+        else -> Column(Modifier.fillMaxSize()) {
             picture(Modifier.weight(1f).fillMaxWidth())
-            controls(Modifier.fillMaxWidth().padding(RexSpace.Medium))
+            controls(Modifier.fillMaxWidth().padding(RexSpace.Medium), false)
         }
     }
 }
@@ -134,16 +149,19 @@ data class LiveSettings(
     }
 }
 
-/** What sits over the picture: the recording badge, the frame rate, and why the picture is not moving. */
+/**
+ * What sits over the picture: the recording badge, the frame rate, and why the picture is not moving. With
+ * the HUD on, the frame rate gives way to its figures and the reason moves to the middle, clear of them.
+ */
 @Composable
-private fun PictureOverlays(camera: CameraState, settings: LiveSettings, showPicture: () -> Unit) {
+private fun PictureOverlays(camera: CameraState, settings: LiveSettings, hudOn: Boolean, showPicture: () -> Unit) {
     Box(Modifier.fillMaxSize().padding(RexSpace.Compact)) {
         if (camera.isRecording) {
             RecordingBadge(camera.status?.clipLength, Modifier.align(Alignment.TopStart))
         }
 
         val live = camera.live
-        if (settings.showFrameRate && live is LiveView.Playing && live.framesPerSecond > 0) {
+        if (settings.showFrameRate && !hudOn && live is LiveView.Playing && live.framesPerSecond > 0) {
             Badge("%.1f fps".format(Locale.ROOT, live.framesPerSecond), Modifier.align(Alignment.TopEnd))
         }
 
@@ -158,7 +176,9 @@ private fun PictureOverlays(camera: CameraState, settings: LiveSettings, showPic
                 OutlineAction(text = "Show the live picture", onClick = showPicture)
             }
         } else {
-            pictureMessage(camera)?.let { Badge(it, Modifier.align(Alignment.BottomCenter)) }
+            pictureMessage(camera)?.let {
+                Badge(it, Modifier.align(if (hudOn) Alignment.Center else Alignment.BottomCenter))
+            }
         }
     }
 }
@@ -227,19 +247,48 @@ private fun Badge(text: String, modifier: Modifier) {
     }
 }
 
-/** The mode, the shutter, what is left on the card, the HUD, and leaving. */
+/**
+ * The mode, the shutter, what is left on the card, the HUD, and leaving: in a row under or beside the
+ * picture, or [stacked] in a narrow strip when the screen is short.
+ */
 @Composable
-private fun Controls(graph: AppGraph, camera: CameraState, hudOn: Boolean, onHud: () -> Unit, modifier: Modifier) {
+private fun Controls(
+    graph: AppGraph,
+    camera: CameraState,
+    hudOn: Boolean,
+    onHud: () -> Unit,
+    stacked: Boolean,
+    modifier: Modifier,
+) {
     var confirmLeave by remember { mutableStateOf(false) }
     val connected = camera.connection == Connection.Connected
     val busy = camera.task != null
+    val hud: @Composable (Modifier) -> Unit = {
+        OutlineAction(
+            text = if (hudOn) "Hide HUD" else "HUD",
+            onClick = onHud,
+            tone = if (hudOn) Tone.Signal else Tone.Neutral,
+            modifier = it,
+        )
+    }
+    val leave: @Composable (Modifier) -> Unit = {
+        OutlineAction(
+            text = "Leave",
+            onClick = { if (camera.isRecording) confirmLeave = true else graph.controller.disconnect() },
+            modifier = it,
+        )
+    }
 
     Column(
         modifier,
-        verticalArrangement = Arrangement.spacedBy(RexSpace.Compact),
+        verticalArrangement = if (stacked) {
+            Arrangement.spacedBy(RexSpace.Compact, Alignment.CenterVertically)
+        } else {
+            Arrangement.spacedBy(RexSpace.Compact)
+        },
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        RexText(text = statusLine(camera), style = RexType.BodySmall, maxLines = 1)
+        RexText(text = statusLine(camera), style = RexType.BodySmall, maxLines = if (stacked) 3 else 1)
         SegmentedChoice(
             options = CaptureMode.entries,
             selected = camera.mode,
@@ -248,20 +297,15 @@ private fun Controls(graph: AppGraph, camera: CameraState, hudOn: Boolean, onHud
             enabled = connected && !camera.isRecording && !busy,
             modifier = Modifier.fillMaxWidth(),
         )
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                OutlineAction(
-                    text = if (hudOn) "Hide HUD" else "HUD",
-                    onClick = onHud,
-                    tone = if (hudOn) Tone.Signal else Tone.Neutral,
-                )
-            }
+        if (stacked) {
             Shutter(camera, enabled = connected && !busy) { graph.controller.shutter() }
-            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                OutlineAction(
-                    text = "Leave",
-                    onClick = { if (camera.isRecording) confirmLeave = true else graph.controller.disconnect() },
-                )
+            hud(Modifier.fillMaxWidth())
+            leave(Modifier.fillMaxWidth())
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) { hud(Modifier) }
+                Shutter(camera, enabled = connected && !busy) { graph.controller.shutter() }
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) { leave(Modifier) }
             }
         }
     }

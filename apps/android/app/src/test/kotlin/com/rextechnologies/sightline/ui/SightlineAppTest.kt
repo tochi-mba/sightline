@@ -123,6 +123,18 @@ class SightlineAppTest {
     }
 
     @Test
+    @Config(qualifiers = "w853dp-h384dp")
+    fun `a phone on its side keeps a narrow rail that still goes everywhere`() {
+        val test = TestGraph()
+        test.graph.settings[AppSettings.OnboardingDone] = true
+        show(test)
+
+        compose.onNodeWithText("SETTINGS").performClick()
+
+        compose.onNode(tab(Destination.Settings)).assertIsSelected()
+    }
+
+    @Test
     fun `a camera used before is joined again as the app opens, when wanted`() {
         val test = TestGraph()
         test.graph.settings[AppSettings.OnboardingDone] = true

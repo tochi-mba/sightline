@@ -51,6 +51,16 @@ The controller lives in the app's graph, not in a screen, so a recording or Sent
 screen turning off. A connected-device foreground service keeps the process alive while a camera is
 connected or Sentry is armed, and its notification carries Record, Photo, Disarm and Disconnect.
 
+## Screen sizes
+
+- **A phone held upright:** the bar along the bottom, the controls under the picture.
+- **A wide screen** (600dp and wider): a rail down the side, the controls beside the picture.
+- **A phone on its side** (wide, but under 480dp tall): a narrow rail, and the controls stacked in a
+  strip like a camera app's, so the picture gets the whole height.
+- **The HUD** sits over the picture on translucent panels at its edges, the speed sized to the
+  picture's height; the middle of the picture stays clear, and a picture that has stopped still says
+  why.
+
 ## Permissions
 
 | Permission | When it is asked | Why |
