@@ -143,6 +143,43 @@ public sealed class ShellViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task Closing_keeps_it_running_only_while_there_is_something_to_keep_and_the_tray_says_what()
+    {
+        await using var app = new TestApp(Returning);
+        using var shell = new ShellViewModel(app.Parts);
+        var changed = new List<string?>();
+        shell.PropertyChanged += (_, e) => changed.Add(e.PropertyName);
+        shell.KeepsRunningWhenClosed.ShouldBeFalse();
+        shell.TrayText.ShouldBe("Sightline");
+        shell.SentryAction.ShouldBe("Arm Sentry");
+
+        await app.ConnectedAsync();
+        await TestApp.EventuallyAsync(() => shell.Camera.IsConnected);
+        shell.KeepsRunningWhenClosed.ShouldBeTrue();
+        shell.TrayText.ShouldBe("Sightline: connected");
+
+        app.Preferences.Update(p => p with { CloseToTray = false });
+        shell.KeepsRunningWhenClosed.ShouldBeFalse();
+        app.Preferences.Update(p => p with { CloseToTray = true });
+        await app.Controller.DisconnectAsync();
+        await TestApp.EventuallyAsync(() => !shell.KeepsRunningWhenClosed);
+
+        shell.ToggleSentryCommand.Execute(null);
+        shell.KeepsRunningWhenClosed.ShouldBeTrue();
+        shell.TrayText.ShouldBe("Sightline: Sentry is armed");
+        shell.SentryAction.ShouldBe("Disarm Sentry");
+        changed.ShouldContain(nameof(ShellViewModel.TrayText));
+
+        app.Alarms.AlarmRaised(new DateTimeOffset(2026, 10, 5, 21, 40, 7, TimeSpan.Zero), [1], saveSnapshot: false);
+        shell.TrayText.ShouldStartWith("Sightline: movement at ");
+
+        shell.ToggleSentryCommand.Execute(null);
+        shell.Sentry.Armed.ShouldBeFalse();
+        shell.SentryAction.ShouldBe("Arm Sentry");
+        shell.Sentry.Movement = 0.1;
+    }
+
+    [AvaloniaFact]
     public async Task Once_closed_it_follows_the_camera_no_more()
     {
         await using var app = new TestApp(Returning);

@@ -56,6 +56,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         }
 
         parts.Controller.StateChanged += OnStateChanged;
+        Sentry.PropertyChanged += OnSentryChanged;
         Apply();
         Live.Shown(true);
     }
@@ -85,7 +86,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     /// <summary>The camera as it is now.</summary>
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ConnectionWord), nameof(ShowsConnect))]
+    [NotifyPropertyChangedFor(nameof(ConnectionWord), nameof(ShowsConnect), nameof(TrayText), nameof(KeepsRunningWhenClosed))]
     private CameraState camera = CameraState.Initial;
 
     /// <summary>What the camera last had to say, until dismissed or replaced.</summary>
@@ -122,6 +123,24 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     /// <summary>Whether what's new shows.</summary>
     public bool ShowsWhatsNew => WhatsNew.Count > 0;
 
+    /// <summary>
+    /// Whether closing the window leaves Sightline running in the tray: when the person allows it, and a
+    /// camera is connected or being connected to, or Sentry is armed. With nothing to keep, it simply closes.
+    /// </summary>
+    public bool KeepsRunningWhenClosed =>
+        parts.Preferences.Current.CloseToTray
+        && (Camera.Connection is not (Connection.Idle or Connection.Failed) || Sentry.Armed);
+
+    /// <summary>The tray's tooltip: the last alarm, Sentry armed, or the connection, most pressing first.</summary>
+    public string TrayText =>
+        Sentry.LastAlarmAt is { } at ? $"Sightline: movement at {at}"
+        : Sentry.Armed ? "Sightline: Sentry is armed"
+        : ConnectionWord is { } word ? $"Sightline: {word.ToLowerInvariant()}"
+        : "Sightline";
+
+    /// <summary>What the tray's Sentry item does now.</summary>
+    public string SentryAction => Sentry.Armed ? "Disarm Sentry" : "Arm Sentry";
+
     /// <summary>Joins the last camera used, when the person allows it. Called once the window is up.</summary>
     public void Start()
     {
@@ -143,6 +162,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         parts.Controller.StateChanged -= OnStateChanged;
+        Sentry.PropertyChanged -= OnSentryChanged;
         Live.Dispose();
         Library.Dispose();
         Sentry.Dispose();
@@ -160,6 +180,30 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     [RelayCommand]
     private void Go(Page to) => Page = to;
+
+    /// <summary>Arms Sentry, or stands it down, from the tray.</summary>
+    [RelayCommand]
+    private void ToggleSentry()
+    {
+        if (Sentry.Armed)
+        {
+            Sentry.DisarmCommand.Execute(null);
+        }
+        else
+        {
+            Sentry.ArmCommand.Execute(null);
+        }
+    }
+
+    private void OnSentryChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(SentryViewModel.Armed) or nameof(SentryViewModel.LastAlarmAt))
+        {
+            OnPropertyChanged(nameof(TrayText));
+            OnPropertyChanged(nameof(SentryAction));
+            OnPropertyChanged(nameof(KeepsRunningWhenClosed));
+        }
+    }
 
     [RelayCommand]
     private void DismissNotice() => parts.Controller.DismissNotice(noticeId);

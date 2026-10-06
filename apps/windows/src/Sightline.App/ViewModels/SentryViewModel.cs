@@ -57,6 +57,10 @@ public sealed partial class SentryViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string? lastAlarm;
 
+    /// <summary>When the last alarm went up, as a clock shows it; null before the first.</summary>
+    [ObservableProperty]
+    private string? lastAlarmAt;
+
     /// <summary>How Sentry will run, as the settings have it.</summary>
     public string Summary
     {
@@ -137,9 +141,12 @@ public sealed partial class SentryViewModel : ObservableObject, IDisposable
     }
 
     private void OnAlarm(AlarmNotice notice) => parts.Post(() =>
+    {
+        LastAlarmAt = Clock(notice.At);
         LastAlarm = notice.SavedTo is null
-            ? $"Movement at {Clock(notice.At)}."
-            : $"Movement at {Clock(notice.At)}. The picture is in {parts.Alarms.Folder}.");
+            ? $"Movement at {LastAlarmAt}."
+            : $"Movement at {LastAlarmAt}. The picture is in {parts.Alarms.Folder}.";
+    });
 
     private void OnPreferences(Preferences preferences) => parts.Post(() => OnPropertyChanged(nameof(Summary)));
 

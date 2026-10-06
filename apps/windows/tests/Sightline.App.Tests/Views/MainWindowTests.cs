@@ -180,6 +180,35 @@ public sealed class MainWindowTests
     }
 
     [AvaloniaFact]
+    public async Task Closed_with_a_camera_connected_it_goes_to_the_tray_and_comes_back()
+    {
+        await using var app = App(Returning);
+        using var shell = new ShellViewModel(app.Parts);
+        var window = Show(shell);
+        var closed = false;
+        window.Closed += (_, _) => closed = true;
+        await app.ConnectedAsync();
+        await UntilAsync(() => shell.KeepsRunningWhenClosed);
+
+        window.Close();
+        Dispatcher.UIThread.RunJobs();
+
+        closed.ShouldBeFalse();
+        window.IsVisible.ShouldBeFalse();
+        window.Bring();
+        window.IsVisible.ShouldBeTrue();
+        window.WindowState = WindowState.Minimized;
+        window.Bring();
+        window.WindowState.ShouldBe(WindowState.Normal);
+
+        await app.Controller.DisconnectAsync();
+        await UntilAsync(() => !shell.KeepsRunningWhenClosed);
+        window.Close();
+        Dispatcher.UIThread.RunJobs();
+        closed.ShouldBeTrue();
+    }
+
+    [AvaloniaFact]
     public async Task Opening_the_window_starts_the_app_and_looks_for_cameras()
     {
         await using var app = App(Returning);

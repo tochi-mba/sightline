@@ -1,4 +1,5 @@
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
 using Avalonia.Threading;
@@ -21,6 +22,9 @@ public sealed class SightlineApplication : Application
     /// <summary>How long leaving the camera may take as the app closes: the adapter is put back in that time.</summary>
     private static readonly TimeSpan LeaveTime = TimeSpan.FromSeconds(10);
 
+    /// <summary>This copy's claim to be the only one, which another start wakes; null in tests.</summary>
+    internal static SingleInstance? Instance { get; set; }
+
     /// <inheritdoc />
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -30,11 +34,37 @@ public sealed class SightlineApplication : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
             var (shell, close) = Build();
-            desktop.MainWindow = new MainWindow { DataContext = shell };
+            var window = new MainWindow { DataContext = shell };
+            desktop.MainWindow = window;
+            ShowTray(desktop, window, shell);
+            Instance?.OnWake(() => Dispatcher.UIThread.Post(window.Bring));
             desktop.ShutdownRequested += (_, _) => close();
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>The tray icon: back to the window, Sentry on or off, and quitting, which nothing else does.</summary>
+    private void ShowTray(IClassicDesktopStyleApplicationLifetime desktop, MainWindow window, ShellViewModel shell)
+    {
+        var show = new NativeMenuItem("Show Sightline");
+        show.Click += (_, _) => window.Bring();
+        var sentry = new NativeMenuItem(shell.SentryAction) { Command = shell.ToggleSentryCommand };
+        var quit = new NativeMenuItem("Quit Sightline");
+        quit.Click += (_, _) => desktop.Shutdown();
+        var tray = new TrayIcon
+        {
+            Icon = window.Icon,
+            ToolTipText = shell.TrayText,
+            Menu = new NativeMenu { show, sentry, new NativeMenuItemSeparator(), quit },
+        };
+        tray.Clicked += (_, _) => window.Bring();
+        shell.PropertyChanged += (_, e) =>
+        {
+            tray.ToolTipText = shell.TrayText;
+            sentry.Header = shell.SentryAction;
+        };
+        TrayIcon.SetIcons(this, [tray]);
     }
 
     /// <summary>

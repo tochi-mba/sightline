@@ -7,6 +7,8 @@
     <RootNamespace>Sightline.App</RootNamespace>
     <AssemblyName>Sightline</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Drawn by tools/scripts/generate_icon.py from the site's favicon; regenerate rather than edit. -->
+    <ApplicationIcon>Assets\sightline.ico</ApplicationIcon>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <Description>Sightline for Windows: live view and control for Wi-Fi action cameras.</Description>
@@ -30,6 +32,10 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Sightline.App.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
   </ItemGroup>
 
 </Project>
