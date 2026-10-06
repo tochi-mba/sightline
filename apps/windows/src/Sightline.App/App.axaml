@@ -11,14 +11,14 @@
   <Application.Resources>
     <ResourceDictionary>
       <ResourceDictionary.MergedDictionaries>
-        <ResourceInclude Source="avares://Sightline/Theme/RexColors.axaml" />
+        <ResourceInclude Source="avares://Sightline.App/Theme/RexColors.axaml" />
       </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>
   </Application.Resources>
 
   <Application.Styles>
     <FluentTheme />
-    <StyleInclude Source="avares://Sightline/Theme/RexStyles.axaml" />
+    <StyleInclude Source="avares://Sightline.App/Theme/RexStyles.axaml" />
   </Application.Styles>
 
 </Application>

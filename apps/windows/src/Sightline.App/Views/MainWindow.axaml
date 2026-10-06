@@ -6,7 +6,7 @@
         x:Class="Sightline.App.Views.MainWindow"
         x:DataType="vm:ShellViewModel"
         Title="Sightline"
-        Icon="avares://Sightline/Assets/sightline.ico"
+        Icon="avares://Sightline.App/Assets/sightline.ico"
         Width="1200" Height="780" MinWidth="900" MinHeight="600"
         WindowStartupLocation="CenterScreen">
 

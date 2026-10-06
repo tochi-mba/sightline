@@ -5,7 +5,9 @@
     <!-- Windows-only: joining Wi-Fi goes through netsh, and the app ships as a Windows installer. -->
     <TargetFramework>net10.0-windows</TargetFramework>
     <RootNamespace>Sightline.App</RootNamespace>
-    <AssemblyName>Sightline</AssemblyName>
+    <!-- Not "Sightline": the command line is sightline.exe, and Windows names ignore case, so the two would
+         overwrite each other in the one install folder. The Start menu shows the package title, Sightline. -->
+    <AssemblyName>Sightline.App</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Drawn by tools/scripts/generate_icon.py from the site's favicon; regenerate rather than edit. -->
     <ApplicationIcon>Assets\sightline.ico</ApplicationIcon>
