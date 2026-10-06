@@ -1,0 +1,72 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Sightline.App.ViewModels"
+             xmlns:views="using:Sightline.App.Views"
+             x:Class="Sightline.App.Views.LivePage"
+             x:DataType="vm:ShellViewModel">
+
+  <Panel>
+    <!-- Before a camera is connected: choosing and joining one. -->
+    <Panel IsVisible="{Binding ShowsConnect}">
+      <views:ConnectPanel DataContext="{Binding Connect}" />
+    </Panel>
+
+    <Grid RowDefinitions="*,Auto" IsVisible="{Binding !ShowsConnect}">
+
+      <!-- The picture, with its guides and badges over it. -->
+      <Border Classes="panel" Padding="0" ClipToBounds="True" Background="#000000">
+        <Panel>
+          <Image Name="Picture" Source="{Binding Live.Picture}" Stretch="{Binding Live.PictureStretch}"
+                 RenderTransformOrigin="50%,50%" AutomationProperties.Name="The camera's live picture">
+            <Image.RenderTransform>
+              <TransformGroup>
+                <ScaleTransform ScaleX="{Binding Live.PictureScaleX}" />
+                <RotateTransform Angle="{Binding Live.PictureAngle}" />
+              </TransformGroup>
+            </Image.RenderTransform>
+          </Image>
+
+          <Grid Name="Thirds" ColumnDefinitions="*,1,*,1,*" RowDefinitions="*,1,*,1,*" IsVisible="{Binding Live.ShowsThirds}">
+            <Rectangle Grid.Column="1" Grid.RowSpan="5" Classes="guide" />
+            <Rectangle Grid.Column="3" Grid.RowSpan="5" Classes="guide" />
+            <Rectangle Grid.Row="1" Grid.ColumnSpan="5" Classes="guide" />
+            <Rectangle Grid.Row="3" Grid.ColumnSpan="5" Classes="guide" />
+          </Grid>
+          <Panel Name="Centre" IsVisible="{Binding Live.ShowsCentre}">
+            <Rectangle Width="36" Height="1" Classes="guide" />
+            <Rectangle Width="1" Height="36" Classes="guide" />
+          </Panel>
+
+          <Border Classes="badge live" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="14"
+                  IsVisible="{Binding Live.Recording}">
+            <TextBlock Text="● REC" Foreground="{StaticResource LiveBrush}" FontWeight="Bold" FontSize="11" />
+          </Border>
+          <Border Classes="badge" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="14"
+                  IsVisible="{Binding Live.FrameRate, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+            <TextBlock Classes="readout" FontSize="11" Text="{Binding Live.FrameRate}" />
+          </Border>
+          <Border Classes="badge" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="14"
+                  IsVisible="{Binding Live.Message, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <TextBlock Name="PictureMessage" Text="{Binding Live.Message}" FontSize="12" />
+          </Border>
+        </Panel>
+      </Border>
+
+      <!-- The mode, the shutter, a snapshot, and what the card still holds. -->
+      <Grid Grid.Row="1" ColumnDefinitions="Auto,16,Auto,12,Auto,*" RowDefinitions="Auto,Auto" Margin="0,16,0,0">
+        <Border Classes="segments">
+          <StackPanel Orientation="Horizontal">
+            <Button Classes="segment" Classes.selected="{Binding !Live.Photos}" Content="Video" Command="{Binding Live.UseVideoCommand}" />
+            <Button Classes="segment" Classes.selected="{Binding Live.Photos}" Content="Photos" Command="{Binding Live.UsePhotosCommand}" />
+          </StackPanel>
+        </Border>
+        <Button Name="Shutter" Grid.Column="2" Classes="primary" Classes.recording="{Binding Live.Recording}"
+                Content="{Binding Live.ShutterLabel}" Command="{Binding Live.ShutterCommand}" MinWidth="170" />
+        <Button Grid.Column="4" Content="Snapshot" Command="{Binding Live.SaveSnapshotCommand}" />
+        <TextBlock Grid.Column="5" Classes="muted" Text="{Binding Live.Status}" HorizontalAlignment="Right" VerticalAlignment="Center" />
+        <TextBlock Grid.Row="1" Grid.ColumnSpan="6" Classes="muted" Margin="0,8,0,0" Text="{Binding Live.Snapshot}"
+                   IsVisible="{Binding Live.Snapshot, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      </Grid>
+    </Grid>
+  </Panel>
+</UserControl>

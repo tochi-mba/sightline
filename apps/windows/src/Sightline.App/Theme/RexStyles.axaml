@@ -82,6 +82,55 @@
     <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
   </Style>
 
+  <!-- The rail's page buttons: quiet until chosen, then the signal wash. -->
+  <Style Selector="Button.nav">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+    <Setter Property="Padding" Value="8,12" />
+  </Style>
+  <Style Selector="Button.nav.selected">
+    <Setter Property="Background" Value="{StaticResource SignalWashBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource SignalBrush}" />
+  </Style>
+
+  <!-- Two or three choices side by side, the chosen one lit. -->
+  <Style Selector="Border.segments">
+    <Setter Property="Background" Value="{StaticResource RaisedBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusMedium}" />
+    <Setter Property="Padding" Value="3" />
+  </Style>
+  <Style Selector="Button.segment">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Foreground" Value="{StaticResource MutedBrush}" />
+    <Setter Property="MinHeight" Value="34" />
+  </Style>
+  <Style Selector="Button.segment.selected">
+    <Setter Property="Background" Value="{StaticResource SignalWashBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource SignalBrush}" />
+  </Style>
+
+  <!-- Words over the live picture, on a scrim so they read against any scene. -->
+  <Style Selector="Border.badge">
+    <Setter Property="Background" Value="#B3080A09" />
+    <Setter Property="CornerRadius" Value="20" />
+    <Setter Property="Padding" Value="10,5" />
+  </Style>
+  <Style Selector="Border.badge.live">
+    <Setter Property="BorderBrush" Value="{StaticResource LiveBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+  </Style>
+
+  <!-- Framing guides: hairlines that stay out of the picture's way. -->
+  <Style Selector="Rectangle.guide">
+    <Setter Property="Fill" Value="#73F2F5EE" />
+  </Style>
+
   <Style Selector="ComboBox">
     <Setter Property="Background" Value="{StaticResource RaisedBrush}" />
     <Setter Property="BorderBrush" Value="{StaticResource LineBrush}" />

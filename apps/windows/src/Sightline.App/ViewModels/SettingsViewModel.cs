@@ -104,6 +104,12 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     /// <summary>The sensitivities to choose from.</summary>
     public IReadOnlyList<Sensitivity> Sensitivities { get; } = Enum.GetValues<Sensitivity>();
 
+    /// <summary>The arming delays to choose from, in seconds: 0 to 120, in fives.</summary>
+    public IReadOnlyList<int> ArmDelays { get; } = Enumerable.Range(0, 25).Select(i => i * 5).ToList();
+
+    /// <summary>The waits between alarms to choose from, in seconds: 10 to 600, in tens.</summary>
+    public IReadOnlyList<int> Cooldowns { get; } = Enumerable.Range(1, 60).Select(i => i * 10).ToList();
+
     /// <summary>This build's version.</summary>
     public string Version => parts.Version;
 

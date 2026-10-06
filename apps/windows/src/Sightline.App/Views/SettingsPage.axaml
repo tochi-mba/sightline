@@ -1,0 +1,102 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Sightline.App.ViewModels"
+             xmlns:gs="using:Sightline.Protocol.GpSock"
+             x:Class="Sightline.App.Views.SettingsPage"
+             x:DataType="vm:SettingsViewModel">
+
+  <ScrollViewer>
+    <StackPanel Spacing="22" MaxWidth="720" HorizontalAlignment="Left" Margin="0,0,16,24">
+
+      <StackPanel Spacing="10">
+        <TextBlock Classes="eyebrow" Text="THE CAMERA" />
+        <TextBlock Name="CameraLocked" Classes="muted" TextWrapping="Wrap" Text="{Binding CameraLocked}"
+                   IsVisible="{Binding CameraLocked, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <ItemsControl Name="CameraSettings" ItemsSource="{Binding CameraSettings}"
+                      IsEnabled="{Binding CameraLocked, Converter={x:Static ObjectConverters.IsNull}}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:CameraSettingItem">
+              <Grid ColumnDefinitions="*,260" Margin="0,4">
+                <StackPanel VerticalAlignment="Center">
+                  <TextBlock Text="{Binding Name}" FontWeight="Bold" />
+                  <TextBlock Classes="muted" Text="{Binding Category}" />
+                </StackPanel>
+                <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding Choices}"
+                          SelectedItem="{Binding Selected}" AutomationProperties.Name="{Binding Name}">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="gs:MenuChoice">
+                      <TextBlock Text="{Binding Label}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <ItemsControl ItemsSource="{Binding CameraFacts}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:CameraSettingItem">
+              <Grid ColumnDefinitions="*,260" Margin="0,4">
+                <TextBlock Text="{Binding Name}" />
+                <TextBlock Grid.Column="1" Classes="muted" Text="{Binding Shown}" />
+              </Grid>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+
+      <StackPanel Spacing="8">
+        <TextBlock Classes="eyebrow" Text="CONNECTION" />
+        <ToggleSwitch Content="Connect to the last camera when Sightline opens" IsChecked="{Binding AutoConnect}" />
+        <ToggleSwitch Content="Reconnect a lost camera automatically" IsChecked="{Binding Reconnect}" />
+      </StackPanel>
+
+      <StackPanel Spacing="8">
+        <TextBlock Classes="eyebrow" Text="LIVE VIEW" />
+        <ToggleSwitch Content="Fill the area, cropping the picture's edges" IsChecked="{Binding FillPicture}" />
+        <Grid ColumnDefinitions="*,260">
+          <TextBlock Text="Framing guide" VerticalAlignment="Center" />
+          <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding Grids}" SelectedItem="{Binding Grid}" />
+        </Grid>
+        <ToggleSwitch Content="Upside-down mount" IsChecked="{Binding Flip}" />
+        <ToggleSwitch Content="Mirror the picture" IsChecked="{Binding Mirror}" />
+        <ToggleSwitch Content="Show the frame rate" IsChecked="{Binding ShowFrameRate}" />
+      </StackPanel>
+
+      <StackPanel Spacing="8">
+        <TextBlock Classes="eyebrow" Text="COPIES" />
+        <Grid ColumnDefinitions="*,8,Auto">
+          <TextBox Text="{Binding DownloadFolder}" AutomationProperties.Name="Where copies go" />
+          <Button Grid.Column="2" Content="Open" Command="{Binding OpenDownloadsCommand}" />
+        </Grid>
+        <ToggleSwitch Content="Delete from the camera once safely copied" IsChecked="{Binding DeleteAfterCopy}" />
+      </StackPanel>
+
+      <StackPanel Spacing="8">
+        <TextBlock Classes="eyebrow" Text="SENTRY" />
+        <Grid ColumnDefinitions="*,260" RowDefinitions="Auto,8,Auto,8,Auto">
+          <TextBlock Text="Sensitivity" VerticalAlignment="Center" />
+          <ComboBox Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding Sensitivities}" SelectedItem="{Binding SentrySensitivity}" />
+          <TextBlock Grid.Row="2" Text="Seconds before it starts watching" VerticalAlignment="Center" />
+          <ComboBox Grid.Row="2" Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding ArmDelays}" SelectedItem="{Binding SentryArmDelay}" />
+          <TextBlock Grid.Row="4" Text="Seconds between alarms" VerticalAlignment="Center" />
+          <ComboBox Grid.Row="4" Grid.Column="1" HorizontalAlignment="Stretch" ItemsSource="{Binding Cooldowns}" SelectedItem="{Binding SentryCooldown}" />
+        </Grid>
+        <ToggleSwitch Content="Record on the camera while the alarm lasts" IsChecked="{Binding SentryRecords}" />
+        <ToggleSwitch Content="Save the picture that raised the alarm" IsChecked="{Binding SentrySnapshots}" />
+      </StackPanel>
+
+      <StackPanel Spacing="8">
+        <TextBlock Classes="eyebrow" Text="SIGHTLINE" />
+        <ToggleSwitch Content="Keep running in the tray when the window closes" IsChecked="{Binding CloseToTray}" />
+        <TextBlock Text="{Binding Version, StringFormat='Version {0}'}" />
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <Button Content="Source code" Command="{Binding OpenSourceCommand}" />
+          <Button Content="Show the introduction again" Command="{Binding ShowIntroductionCommand}" />
+        </StackPanel>
+        <TextBlock Classes="muted" TextWrapping="Wrap"
+                   Text="No account, no analytics, no ads. The camera's pictures stay between it and this PC." />
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

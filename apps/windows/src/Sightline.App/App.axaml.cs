@@ -1,15 +1,26 @@
 using Avalonia;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Threading;
 using Sightline.App.Services;
 using Sightline.App.ViewModels;
 using Sightline.App.Views;
+using Sightline.Core;
+using Sightline.Core.Camera;
+using Sightline.Core.Connectivity;
+using Sightline.Core.Sentry;
+using Sightline.Core.Settings;
+using Sightline.Platform.Windows.Network;
+using Sightline.Platform.Windows.Wlan;
 
 namespace Sightline.App;
 
 /// <summary>Sightline for Windows, a REX Technologies product.</summary>
 public sealed class SightlineApplication : Application
 {
+    /// <summary>How long leaving the camera may take as the app closes: the adapter is put back in that time.</summary>
+    private static readonly TimeSpan LeaveTime = TimeSpan.FromSeconds(10);
+
     /// <inheritdoc />
     public override void Initialize() => AvaloniaXamlLoader.Load(this);
 
@@ -18,11 +29,51 @@ public sealed class SightlineApplication : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            var viewModel = new MainViewModel(new LiveCameraService());
-            desktop.MainWindow = new MainWindow { DataContext = viewModel };
-            desktop.ShutdownRequested += (_, _) => viewModel.Dispose();
+            var (shell, close) = Build();
+            desktop.MainWindow = new MainWindow { DataContext = shell };
+            desktop.ShutdownRequested += (_, _) => close();
         }
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>
+    /// Builds the window from the real parts: this PC's Wi-Fi, the camera on the adapter the person chooses,
+    /// Sentry, and the preferences kept for this person.
+    /// </summary>
+    /// <returns>The window's view model, and what to run as the app closes.</returns>
+    private static (ShellViewModel Shell, Action Close) Build()
+    {
+        var preferences = new PreferencesStore(PreferencesStore.DefaultPath);
+        var wlan = new WindowsWlanClient();
+        var network = new SystemNetworkState(CameraAddress.Default);
+        var choice = new CameraChoice();
+        var controller = new CameraController(
+            new WifiCameraLink(wlan, network, () => choice.Current),
+            reconnects: () => preferences.Current.Reconnect);
+        var alarms = new WindowsSentryActions(WindowsSentryActions.DefaultFolder);
+        var sentry = new SentryRunner(controller, () => preferences.Current.Sentry, alarms, LumaSampler.Grid);
+        var parts = new AppParts(
+            controller,
+            choice,
+            preferences,
+            new CameraFinder(wlan, network),
+            sentry,
+            alarms,
+            new WindowsDesktop(),
+            Pictures.Decode,
+            action => Dispatcher.UIThread.Post(action),
+            AppVersion.Of(typeof(SightlineApplication)),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Sightline"));
+        var shell = new ShellViewModel(parts);
+
+        return (shell, () =>
+        {
+            shell.Dispose();
+            sentry.Dispose();
+            // Leaving the camera puts the adapter back on the network it was taken from; the app waits for
+            // that, a little, rather than closing with the PC still on the camera's Wi-Fi.
+            Task.Run(async () => await controller.DisposeAsync().ConfigureAwait(false)).Wait(LeaveTime);
+        });
     }
 }

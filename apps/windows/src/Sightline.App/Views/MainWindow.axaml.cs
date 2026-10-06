@@ -10,6 +10,21 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Opened += (_, _) => (DataContext as MainViewModel)?.RefreshCamerasCommand.Execute(null);
+        Opened += (_, _) => Begin(DataContext as ShellViewModel);
+    }
+
+    /// <summary>
+    /// Once the window is up: joins the last camera when allowed, and looks for cameras either way, which
+    /// changes no connection and fills the connect panel in case the last camera is not there.
+    /// </summary>
+    internal static void Begin(ShellViewModel? shell)
+    {
+        if (shell is null)
+        {
+            return;
+        }
+
+        shell.Start();
+        shell.Connect.FindCommand.Execute(null);
     }
 }

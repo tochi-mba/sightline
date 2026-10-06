@@ -65,6 +65,11 @@ public sealed class SettingsViewModelTests
         changed.ShouldBeGreaterThanOrEqualTo(14);
         settings.Grids.ShouldBe(Enum.GetValues<GridOverlay>());
         settings.Sensitivities.ShouldBe(Enum.GetValues<Sensitivity>());
+        settings.ArmDelays.ShouldBe(Enumerable.Range(0, 25).Select(i => i * 5));
+        settings.Cooldowns[0].ShouldBe(10);
+        settings.Cooldowns[^1].ShouldBe(600);
+        settings.Cooldowns.All(c => (Preferences.Default with { SentryCooldownSeconds = c }).Validated().SentryCooldownSeconds == c).ShouldBeTrue();
+        settings.ArmDelays.All(d => (Preferences.Default with { SentryArmDelaySeconds = d }).Validated().SentryArmDelaySeconds == d).ShouldBeTrue();
         settings.Version.ShouldBe("0.2.0");
     }
 

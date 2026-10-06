@@ -1,173 +1,116 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:Sightline.App.ViewModels"
-        xmlns:gs="using:Sightline.Protocol.GpSock"
-        xmlns:svc="using:Sightline.App.Services"
+        xmlns:up="using:Sightline.Core.Updates"
+        xmlns:views="using:Sightline.App.Views"
         x:Class="Sightline.App.Views.MainWindow"
-        x:DataType="vm:MainViewModel"
+        x:DataType="vm:ShellViewModel"
         Title="Sightline"
-        Width="1200" Height="760" MinWidth="900" MinHeight="560"
+        Width="1200" Height="780" MinWidth="900" MinHeight="600"
         WindowStartupLocation="CenterScreen">
 
-  <Grid RowDefinitions="Auto,*,Auto" Margin="24,20,24,16">
+  <Panel>
+    <Grid ColumnDefinitions="104,*">
 
-    <!-- Header: the REX eyebrow over the product name, and the camera's state. -->
-    <Grid Grid.Row="0" ColumnDefinitions="*,Auto" Margin="0,0,0,18">
-      <StackPanel Spacing="2">
-        <TextBlock Classes="eyebrow signal" Text="REX TECHNOLOGIES" />
-        <TextBlock Text="Sightline" FontSize="26" FontWeight="Bold" />
-        <TextBlock Classes="muted" Text="{Binding CameraSummary}" IsVisible="{Binding IsLive}" />
-      </StackPanel>
-      <Border Grid.Column="1" Classes="pill" VerticalAlignment="Top"
-              Background="{StaticResource LiveWashBrush}" BorderBrush="{StaticResource LiveBrush}"
-              IsVisible="{Binding IsRecording}">
-        <TextBlock Text="● RECORDING" Foreground="{StaticResource LiveBrush}" FontWeight="Bold" FontSize="11" />
-      </Border>
-    </Grid>
-
-    <Grid Grid.Row="1" ColumnDefinitions="340,20,*">
-
-      <!-- Left: connect while disconnected; the camera's settings once live. -->
-      <Border Grid.Column="0" Classes="panel">
-        <Panel>
-          <StackPanel Spacing="14" IsVisible="{Binding IsDisconnected}">
-            <TextBlock Classes="eyebrow" Text="CONNECT A CAMERA" />
-            <TextBlock TextWrapping="Wrap" Text="Turn the camera's Wi-Fi on. Its name and password are on its screen." />
-
-            <StackPanel Spacing="6">
-              <TextBlock Classes="muted" Text="Camera and Wi-Fi adapter" />
-              <Grid ColumnDefinitions="*,8,Auto">
-                <ComboBox ItemsSource="{Binding Cameras}" SelectedItem="{Binding SelectedCamera}"
-                          HorizontalAlignment="Stretch" PlaceholderText="No camera in range"
-                          AutomationProperties.Name="Camera and Wi-Fi adapter">
-                  <ComboBox.ItemTemplate>
-                    <DataTemplate x:DataType="svc:CameraConnectionOption">
-                      <TextBlock Text="{Binding DisplayName}" />
-                    </DataTemplate>
-                  </ComboBox.ItemTemplate>
-                </ComboBox>
-                <Button Grid.Column="2" Content="Refresh" Command="{Binding RefreshCamerasCommand}" />
-              </Grid>
-            </StackPanel>
-
-            <StackPanel Spacing="6">
-              <TextBlock Classes="muted" Text="Password" />
-              <TextBox Text="{Binding Password}" />
-            </StackPanel>
-
-            <Border Background="{StaticResource RaisedBrush}" CornerRadius="{StaticResource RadiusMedium}" Padding="12">
-              <StackPanel Spacing="8">
-                <TextBlock TextWrapping="Wrap" Classes="muted" Text="{Binding NetworkAdvice}" />
-                <CheckBox IsVisible="{Binding NeedsNetworkChangeConsent}" IsChecked="{Binding NetworkChangeConfirmed}">
-                  <TextBlock TextWrapping="Wrap" Text="I understand. Use this adapter anyway." />
-                </CheckBox>
-              </StackPanel>
-            </Border>
-
-            <Button Classes="primary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                    Content="Connect" Command="{Binding ConnectCommand}" />
-            <TextBlock Classes="muted" Text="Connecting..." IsVisible="{Binding IsConnecting}" HorizontalAlignment="Center" />
+      <!-- The rail: the four pages, always one tap away. -->
+      <Border Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,0,1,0">
+        <Grid RowDefinitions="Auto,*,Auto" Margin="0,20">
+          <TextBlock Classes="eyebrow signal" Text="REX" HorizontalAlignment="Center" />
+          <StackPanel Grid.Row="1" Spacing="6" Margin="10,28,10,0">
+            <Button Name="LiveTab" Classes="nav" Classes.selected="{Binding IsLive}" Content="Live"
+                    Command="{Binding GoCommand}" CommandParameter="{x:Static vm:Page.Live}" />
+            <Button Name="LibraryTab" Classes="nav" Classes.selected="{Binding IsLibrary}" Content="Card"
+                    Command="{Binding GoCommand}" CommandParameter="{x:Static vm:Page.Library}" />
+            <Button Name="SentryTab" Classes="nav" Classes.selected="{Binding IsSentry}" Content="Sentry"
+                    Command="{Binding GoCommand}" CommandParameter="{x:Static vm:Page.Sentry}" />
+            <Button Name="SettingsTab" Classes="nav" Classes.selected="{Binding IsSettings}" Content="Settings"
+                    Command="{Binding GoCommand}" CommandParameter="{x:Static vm:Page.Settings}" />
           </StackPanel>
-
-          <Grid RowDefinitions="Auto,*,Auto" IsVisible="{Binding IsLive}">
-            <TextBlock Classes="eyebrow" Text="CAMERA SETTINGS" Margin="0,0,0,10" />
-            <ScrollViewer Grid.Row="1">
-              <ItemsControl ItemsSource="{Binding Settings}">
-                <ItemsControl.ItemTemplate>
-                  <DataTemplate x:DataType="vm:SettingViewModel">
-                    <StackPanel Spacing="4" Margin="0,0,0,12">
-                      <TextBlock>
-                        <Run Text="{Binding Category}" Foreground="{StaticResource MutedBrush}" FontSize="11" />
-                        <Run Text="  " />
-                        <Run Text="{Binding Name}" FontWeight="Bold" />
-                      </TextBlock>
-                      <ComboBox ItemsSource="{Binding Choices}" SelectedItem="{Binding Selected}" HorizontalAlignment="Stretch">
-                        <ComboBox.ItemTemplate>
-                          <DataTemplate x:DataType="gs:MenuChoice">
-                            <TextBlock Text="{Binding Label}" />
-                          </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                      </ComboBox>
-                    </StackPanel>
-                  </DataTemplate>
-                </ItemsControl.ItemTemplate>
-              </ItemsControl>
-            </ScrollViewer>
-            <Button Grid.Row="2" Content="Disconnect" HorizontalAlignment="Stretch"
-                    HorizontalContentAlignment="Center" Margin="0,10,0,0"
-                    Command="{Binding DisconnectCommand}" />
-          </Grid>
-        </Panel>
-      </Border>
-
-      <!-- Right: the picture, and the shutter bar under it. -->
-      <Grid Grid.Column="2" RowDefinitions="*,Auto">
-        <Border Classes="panel" Padding="0" ClipToBounds="True" Background="#000000"
-                IsVisible="{Binding IsViewingCamera}">
-          <Panel>
-            <Image Source="{Binding Frame}" Stretch="Uniform" />
-          </Panel>
-        </Border>
-
-        <Border Classes="panel" IsVisible="{Binding IsBrowsingFiles}">
-          <Grid RowDefinitions="Auto,*,Auto">
-            <StackPanel Spacing="3" Margin="0,0,0,12">
-              <TextBlock Classes="eyebrow signal" Text="CARD LIBRARY" />
-              <TextBlock Classes="muted" Text="Pick a file to download. Delete always asks twice." />
-            </StackPanel>
-            <ListBox Grid.Row="1" ItemsSource="{Binding Files}" SelectedItem="{Binding SelectedFile}"
-                     AutomationProperties.Name="Files on the camera card">
-              <ListBox.ItemTemplate>
-                <DataTemplate x:DataType="vm:CameraFileViewModel">
-                  <Grid ColumnDefinitions="140,*,Auto" Margin="4,8">
-                    <TextBlock Text="{Binding Name}" FontWeight="Bold" />
-                    <StackPanel Grid.Column="1" Spacing="2">
-                      <TextBlock Text="{Binding Kind}" />
-                      <TextBlock Classes="muted" Text="{Binding Taken}" />
-                    </StackPanel>
-                    <TextBlock Grid.Column="2" Classes="readout" Text="{Binding Size}" VerticalAlignment="Center" />
-                  </Grid>
-                </DataTemplate>
-              </ListBox.ItemTemplate>
-            </ListBox>
-            <Grid Grid.Row="2" ColumnDefinitions="Auto,10,Auto,*,Auto" Margin="0,12,0,0">
-              <Button Classes="primary" Content="Download selected" Command="{Binding DownloadFileCommand}" />
-              <Button Grid.Column="2" Content="{Binding DeleteButtonText}" Command="{Binding DeleteFileCommand}" />
-              <Button Grid.Column="4" Content="Back to live view" Command="{Binding ReturnToLiveCommand}" />
-            </Grid>
-          </Grid>
-        </Border>
-
-        <Border Classes="panel" Padding="0" Background="#000000"
-                IsVisible="{Binding IsDisconnected}">
-          <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Spacing="6">
-            <TextBlock Classes="eyebrow" Text="NO PICTURE" HorizontalAlignment="Center" />
-            <TextBlock Classes="muted" Text="Connect a camera to see what it sees." HorizontalAlignment="Center" />
-          </StackPanel>
-        </Border>
-
-        <Grid Grid.Row="1" ColumnDefinitions="Auto,10,Auto,10,Auto,10,Auto,*" Margin="0,14,0,0"
-              IsVisible="{Binding IsViewingCamera}">
-          <Button Classes="primary" Content="Take photo" Command="{Binding PhotoCommand}" />
-          <Button Grid.Column="2" Command="{Binding RecordCommand}"
-                  Classes.recording="{Binding IsRecording}">
-            <Panel>
-              <TextBlock Text="Record" IsVisible="{Binding !IsRecording}" />
-              <TextBlock Text="Stop recording" IsVisible="{Binding IsRecording}" />
-            </Panel>
-          </Button>
-          <Button Grid.Column="4" Content="Save snapshot" Command="{Binding SaveSnapshotCommand}" />
-          <Button Grid.Column="6" Content="Card files" Command="{Binding BrowseFilesCommand}" />
-          <TextBlock Grid.Column="7" Classes="readout" Text="{Binding FrameRate}"
-                     HorizontalAlignment="Right" VerticalAlignment="Center"
-                     Foreground="{StaticResource MutedBrush}" />
+          <TextBlock Grid.Row="2" Classes="muted" Text="{Binding Version}" HorizontalAlignment="Center" />
         </Grid>
+      </Border>
+
+      <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="28,20,28,18">
+
+        <!-- The header: the product, the camera's connection in a word, and leaving it. -->
+        <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,18">
+          <StackPanel Spacing="2">
+            <TextBlock Classes="eyebrow signal" Text="REX TECHNOLOGIES" />
+            <TextBlock Text="Sightline" FontSize="24" FontWeight="Bold" />
+          </StackPanel>
+          <Border Grid.Column="1" Classes="pill" VerticalAlignment="Center"
+                  IsVisible="{Binding ConnectionWord, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <TextBlock Name="ConnectionWord" Text="{Binding ConnectionWord}" FontSize="11" FontWeight="Bold" />
+          </Border>
+          <Button Grid.Column="2" Margin="12,0,0,0" VerticalAlignment="Center" Content="Disconnect"
+                  Command="{Binding Connect.DisconnectCommand}" IsVisible="{Binding !ShowsConnect}" />
+        </Grid>
+
+        <Panel Grid.Row="1">
+          <views:LivePage IsVisible="{Binding IsLive}" />
+          <Panel IsVisible="{Binding IsLibrary}">
+            <views:LibraryPage DataContext="{Binding Library}" />
+          </Panel>
+          <Panel IsVisible="{Binding IsSentry}">
+            <views:SentryPage DataContext="{Binding Sentry}" />
+          </Panel>
+          <Panel IsVisible="{Binding IsSettings}">
+            <views:SettingsPage DataContext="{Binding Settings}" />
+          </Panel>
+        </Panel>
+
+        <!-- What the camera last had to say, until dismissed. -->
+        <Border Grid.Row="2" Name="NoticeBar" Margin="0,16,0,0" Classes="panel" Padding="14,10"
+                IsVisible="{Binding Notice, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Text="{Binding Notice}" TextWrapping="Wrap" VerticalAlignment="Center" />
+            <Button Grid.Column="1" Content="Dismiss" Command="{Binding DismissNoticeCommand}" Margin="12,0,0,0" />
+          </Grid>
+        </Border>
       </Grid>
     </Grid>
 
-    <!-- The one sentence about what is happening. -->
-    <Border Grid.Row="2" Margin="0,16,0,0" BorderBrush="{StaticResource LineBrush}" BorderThickness="0,1,0,0" Padding="0,12,0,0">
-      <TextBlock Text="{Binding Message}" TextWrapping="Wrap" />
+    <!-- The introduction, the first time. -->
+    <Border Name="Onboarding" Background="{StaticResource InkBrush}" IsVisible="{Binding ShowOnboarding}">
+      <StackPanel MaxWidth="560" VerticalAlignment="Center" Spacing="18" Margin="24">
+        <TextBlock Classes="eyebrow signal" Text="REX TECHNOLOGIES" />
+        <TextBlock Text="See through your camera. Stay online." FontSize="30" FontWeight="Bold" TextWrapping="Wrap" />
+        <TextBlock TextWrapping="Wrap" Classes="muted" FontSize="14"
+                   Text="Sightline joins your action camera's Wi-Fi with an adapter this PC is not using for the internet, so you keep your connection while you watch, shoot and copy." />
+        <StackPanel Spacing="10">
+          <TextBlock TextWrapping="Wrap" Text="Local only: the camera's pictures stay between it and this PC." />
+          <TextBlock TextWrapping="Wrap" Text="No account, no analytics, no ads." />
+          <TextBlock TextWrapping="Wrap" Text="Before an adapter leaves a network, Sightline says so and asks." />
+        </StackPanel>
+        <Button Classes="primary" Content="Get started" HorizontalAlignment="Left"
+                Command="{Binding FinishOnboardingCommand}" />
+      </StackPanel>
     </Border>
-  </Grid>
+
+    <!-- What changed, when an update earned a word. -->
+    <Border Name="WhatsNew" Background="#CC080A09" IsVisible="{Binding ShowsWhatsNew}">
+      <Border Classes="panel" MaxWidth="520" VerticalAlignment="Center" Margin="24">
+        <StackPanel Spacing="14">
+          <TextBlock Classes="eyebrow signal" Text="WHAT'S NEW" />
+          <ItemsControl ItemsSource="{Binding WhatsNew}">
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="up:WhatsNewEntry">
+                <StackPanel Spacing="6" Margin="0,0,0,12">
+                  <TextBlock Classes="title" Text="{Binding Version}" />
+                  <ItemsControl ItemsSource="{Binding Lines}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate x:DataType="x:String">
+                        <TextBlock TextWrapping="Wrap" Text="{Binding}" Margin="0,2" />
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </StackPanel>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+          <Button Classes="primary" Content="Got it" HorizontalAlignment="Left" Command="{Binding CloseWhatsNewCommand}" />
+        </StackPanel>
+      </Border>
+    </Border>
+  </Panel>
 </Window>

@@ -1,0 +1,52 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Sightline.App.ViewModels"
+             x:Class="Sightline.App.Views.SentryPage"
+             x:DataType="vm:SentryViewModel">
+
+  <Grid RowDefinitions="Auto,Auto,*">
+    <StackPanel Spacing="6">
+      <TextBlock Classes="eyebrow" Text="SENTRY" />
+      <TextBlock Name="State" Classes="title" Text="{Binding State}" />
+      <TextBlock Classes="muted" TextWrapping="Wrap" MaxWidth="640" HorizontalAlignment="Left"
+                 Text="Sightline watches the camera's picture for movement, with the window in the tray, and tells you when something moves. Nothing leaves this PC." />
+      <TextBlock Classes="muted" TextWrapping="Wrap" MaxWidth="640" HorizontalAlignment="Left" Text="{Binding Summary}" />
+    </StackPanel>
+
+    <StackPanel Grid.Row="1" Spacing="12" Margin="0,16,0,16">
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <Button Name="Arm" Classes="primary" Content="Arm Sentry" Command="{Binding ArmCommand}" />
+        <Button Name="Disarm" Content="Disarm" Command="{Binding DisarmCommand}" />
+        <Button Content="Open the pictures" Command="{Binding OpenPicturesCommand}" />
+      </StackPanel>
+      <StackPanel Spacing="4" MaxWidth="360" HorizontalAlignment="Left" IsVisible="{Binding Armed}">
+        <TextBlock Classes="muted" Text="Movement now" />
+        <ProgressBar Minimum="0" Maximum="0.25" Value="{Binding Movement}" Height="6" Foreground="{StaticResource SignalBrush}" />
+      </StackPanel>
+      <TextBlock Name="LastAlarm" TextWrapping="Wrap" Foreground="{StaticResource LiveBrush}" Text="{Binding LastAlarm}"
+                 IsVisible="{Binding LastAlarm, Converter={x:Static ObjectConverters.IsNotNull}}" />
+    </StackPanel>
+
+    <ScrollViewer Grid.Row="2">
+      <ItemsControl Name="Alarms" ItemsSource="{Binding Alarms}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel ItemSpacing="12" LineSpacing="12" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:AlarmItem">
+            <Border Classes="panel" Padding="8" Width="232">
+              <StackPanel Spacing="6">
+                <Border Height="122" CornerRadius="{StaticResource RadiusSmall}" ClipToBounds="True" Background="{StaticResource RaisedBrush}">
+                  <Image Source="{Binding Picture}" Stretch="UniformToFill" />
+                </Border>
+                <TextBlock Classes="readout" FontSize="12" Text="{Binding Time, StringFormat='Movement at {0}'}" />
+              </StackPanel>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using Avalonia.Headless.XUnit;
+using Avalonia.Media;
 using Shouldly;
 using Sightline.App.ViewModels;
 using Sightline.Core.Camera;
@@ -126,12 +127,20 @@ public sealed class LiveViewModelTests
         var changed = new List<string?>();
         ((INotifyPropertyChanged)live).PropertyChanged += (_, e) => changed.Add(e.PropertyName);
         (live.Fill, live.Flip, live.Mirror, live.Grid).ShouldBe((false, false, false, GridOverlay.None));
+        (live.PictureStretch, live.PictureAngle, live.PictureScaleX, live.ShowsThirds, live.ShowsCentre)
+            .ShouldBe((Stretch.Uniform, 0d, 1d, false, false));
 
         app.Preferences.Update(p => p with { Fit = PictureFit.Fill, Flip = true, Mirror = true, Grid = GridOverlay.Thirds });
 
         (live.Fill, live.Flip, live.Mirror, live.Grid).ShouldBe((true, true, true, GridOverlay.Thirds));
+        (live.PictureStretch, live.PictureAngle, live.PictureScaleX, live.ShowsThirds, live.ShowsCentre)
+            .ShouldBe((Stretch.UniformToFill, 180d, -1d, true, false));
         changed.ShouldContain(nameof(LiveViewModel.Fill));
         changed.ShouldContain(nameof(LiveViewModel.Grid));
+        changed.ShouldContain(nameof(LiveViewModel.ShowsCentre));
+
+        app.Preferences.Update(p => p with { Grid = GridOverlay.Centre });
+        (live.ShowsThirds, live.ShowsCentre).ShouldBe((false, true));
     }
 
     [AvaloniaFact]

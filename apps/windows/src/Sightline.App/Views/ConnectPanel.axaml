@@ -1,0 +1,55 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Sightline.App.ViewModels"
+             xmlns:net="using:Sightline.Core.Connectivity"
+             x:Class="Sightline.App.Views.ConnectPanel"
+             x:DataType="vm:ConnectViewModel">
+
+  <Border Classes="panel" MaxWidth="620" HorizontalAlignment="Left" VerticalAlignment="Top">
+    <StackPanel Spacing="16">
+      <TextBlock Classes="eyebrow" Text="CONNECT A CAMERA" />
+      <TextBlock TextWrapping="Wrap" Text="Turn the camera's Wi-Fi on. Its name and password are on its screen." />
+
+      <StackPanel Spacing="6">
+        <TextBlock Classes="muted" Text="Camera, and the Wi-Fi adapter to reach it through" />
+        <Grid ColumnDefinitions="*,8,Auto">
+          <ComboBox Name="Cameras" ItemsSource="{Binding Cameras}" SelectedItem="{Binding Selected}"
+                    HorizontalAlignment="Stretch" PlaceholderText="Look for cameras first"
+                    AutomationProperties.Name="Camera and Wi-Fi adapter">
+            <ComboBox.ItemTemplate>
+              <DataTemplate x:DataType="net:CameraOption">
+                <TextBlock Text="{Binding DisplayName}" />
+              </DataTemplate>
+            </ComboBox.ItemTemplate>
+          </ComboBox>
+          <Button Name="Find" Grid.Column="2" Content="Look for cameras" Command="{Binding FindCommand}" />
+        </Grid>
+        <TextBlock Classes="muted" Text="Looking…" IsVisible="{Binding Searching}" />
+      </StackPanel>
+
+      <Border Background="{StaticResource RaisedBrush}" CornerRadius="{StaticResource RadiusMedium}" Padding="12"
+              IsVisible="{Binding Selected, Converter={x:Static ObjectConverters.IsNotNull}}">
+        <StackPanel Spacing="8">
+          <TextBlock TextWrapping="Wrap" Text="{Binding Advice}" />
+          <CheckBox Name="Consent" IsVisible="{Binding NeedsConsent}" IsChecked="{Binding Consented}">
+            <TextBlock TextWrapping="Wrap" Text="I understand. Use this adapter anyway." />
+          </CheckBox>
+        </StackPanel>
+      </Border>
+
+      <StackPanel Spacing="6">
+        <TextBlock Classes="muted" Text="Camera Wi-Fi password" />
+        <TextBox Name="Password" Text="{Binding Password}" PasswordChar="•" AutomationProperties.Name="Camera Wi-Fi password" />
+        <TextBlock Foreground="{StaticResource LiveBrush}" FontSize="12" Text="{Binding PasswordProblem}"
+                   IsVisible="{Binding PasswordProblem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      </StackPanel>
+
+      <Button Name="Connect" Classes="primary" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+              Content="Connect" Command="{Binding ConnectCommand}" />
+      <TextBlock Classes="muted" Text="Connecting…" IsVisible="{Binding Busy}" HorizontalAlignment="Center" />
+      <TextBlock Name="Problem" TextWrapping="Wrap" Foreground="{StaticResource LiveBrush}" Text="{Binding Problem}"
+                 IsVisible="{Binding Problem, Converter={x:Static ObjectConverters.IsNotNull}}" />
+      <TextBlock Name="Message" TextWrapping="Wrap" Classes="muted" Text="{Binding Message}" />
+    </StackPanel>
+  </Border>
+</UserControl>

@@ -1,0 +1,72 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Sightline.App.ViewModels"
+             x:Class="Sightline.App.Views.LibraryPage"
+             x:DataType="vm:LibraryViewModel">
+
+  <Panel>
+    <Grid RowDefinitions="Auto,Auto,*">
+      <StackPanel Spacing="4">
+        <TextBlock Classes="eyebrow" Text="THE CAMERA'S CARD" />
+        <TextBlock Name="Heading" Classes="title" Text="{Binding Heading}" />
+        <TextBlock Classes="muted" TextWrapping="Wrap" Text="{Binding Detail}" />
+      </StackPanel>
+
+      <WrapPanel Grid.Row="1" Margin="0,14,0,14" ItemSpacing="10" LineSpacing="10">
+        <Button Content="Read the card" Command="{Binding RefreshCommand}" />
+        <Button Content="Select all" Command="{Binding SelectAllCommand}" />
+        <Button Content="Select none" Command="{Binding SelectNoneCommand}" />
+        <Button Name="Copy" Classes="primary" Content="{Binding CopyLabel}" Command="{Binding CopyCommand}" />
+        <Button Name="Delete" Content="Delete from the camera" Command="{Binding DeleteCommand}" />
+        <Button Content="Open the folder" Command="{Binding OpenFolderCommand}" />
+      </WrapPanel>
+
+      <ScrollViewer Grid.Row="2">
+        <ItemsControl Name="Files" ItemsSource="{Binding Items}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:CardItem">
+              <StackPanel>
+                <TextBlock Classes="eyebrow" Text="{Binding Day}" Margin="0,14,0,8" IsVisible="{Binding FirstOfDay}" />
+                <Border Classes="panel" Padding="10" Margin="0,0,0,8">
+                  <Grid ColumnDefinitions="Auto,12,128,14,*,Auto">
+                    <CheckBox IsChecked="{Binding Selected}" VerticalAlignment="Center"
+                              AutomationProperties.Name="{Binding Description}" />
+                    <Border Grid.Column="2" Height="72" CornerRadius="{StaticResource RadiusSmall}" ClipToBounds="True"
+                            Background="{StaticResource RaisedBrush}">
+                      <Panel>
+                        <TextBlock Classes="muted" Text="{Binding Kind}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" />
+                      </Panel>
+                    </Border>
+                    <StackPanel Grid.Column="4" Spacing="3" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding Name}" FontWeight="Bold" />
+                      <TextBlock Classes="muted" Text="{Binding Description}" />
+                      <TextBlock FontSize="12" Foreground="{StaticResource SignalBrush}" Text="{Binding Transfer}"
+                                 IsVisible="{Binding Transfer, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                    </StackPanel>
+                    <TextBlock Grid.Column="5" Classes="readout" Text="{Binding Size}" VerticalAlignment="Center" />
+                  </Grid>
+                </Border>
+              </StackPanel>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+    </Grid>
+
+    <!-- Deleting always asks first. -->
+    <Border Name="ConfirmDelete" Background="#CC080A09" IsVisible="{Binding ConfirmingDelete}">
+      <Border Classes="panel" MaxWidth="460" VerticalAlignment="Center">
+        <StackPanel Spacing="14">
+          <TextBlock Classes="title" TextWrapping="Wrap" Text="{Binding DeleteQuestion}" />
+          <TextBlock Classes="muted" TextWrapping="Wrap"
+                     Text="They are removed from the camera's card. Anything already copied to this PC stays here." />
+          <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right">
+            <Button Content="Cancel" Command="{Binding CancelDeleteCommand}" />
+            <Button Classes="recording" Content="Delete" Command="{Binding ConfirmDeleteCommand}" />
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Border>
+  </Panel>
+</UserControl>

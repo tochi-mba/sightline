@@ -36,7 +36,10 @@ internal sealed class TestApp : IAsyncDisposable
     private readonly Lock gate = new();
     private int posted;
 
-    public TestApp(Preferences? preferences = null, IReadOnlyList<WhatsNewEntry>? notes = null)
+    /// <param name="preferences">The preferences to start from; the defaults when omitted.</param>
+    /// <param name="notes">What's new in each version; the curated notes when omitted.</param>
+    /// <param name="post">How work reaches the window's thread; at once, one at a time, when omitted.</param>
+    public TestApp(Preferences? preferences = null, IReadOnlyList<WhatsNewEntry>? notes = null, Action<Action>? post = null)
     {
         Directory.CreateDirectory(Folder);
         Preferences = new PreferencesStore(Path.Combine(Folder, "preferences.json"));
@@ -51,7 +54,7 @@ internal sealed class TestApp : IAsyncDisposable
         Sentry = new SentryRunner(Controller, () => Preferences.Current.Sentry, Alarms, LumaSampler.Grid);
         Parts = new AppParts(
             Controller, Choice, Preferences, new CameraFinder(Wlan, Network), Sentry, Alarms, Desktop,
-            Decode, Post, "0.2.0", Path.Combine(Folder, "snapshots"), notes);
+            Decode, post ?? Post, "0.2.0", Path.Combine(Folder, "snapshots"), notes);
     }
 
     public string Folder { get; } = Path.Combine(Path.GetTempPath(), "sightline-app-" + Guid.NewGuid().ToString("N"));

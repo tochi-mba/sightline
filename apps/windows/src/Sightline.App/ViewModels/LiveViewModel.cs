@@ -1,4 +1,5 @@
 using System.Globalization;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -81,6 +82,21 @@ public sealed partial class LiveViewModel : ObservableObject, IDisposable
     /// <summary>The framing guide drawn over the picture.</summary>
     public GridOverlay Grid => parts.Preferences.Current.Grid;
 
+    /// <summary>How the picture meets its area: covering it, cropped, or fitting inside it.</summary>
+    public Stretch PictureStretch => Fill ? Stretch.UniformToFill : Stretch.Uniform;
+
+    /// <summary>How far the picture is turned: half a turn for an upside-down mount.</summary>
+    public double PictureAngle => Flip ? 180 : 0;
+
+    /// <summary>The picture's horizontal scale: -1 mirrors it.</summary>
+    public double PictureScaleX => Mirror ? -1 : 1;
+
+    /// <summary>Whether the rule-of-thirds lines are drawn.</summary>
+    public bool ShowsThirds => Grid == GridOverlay.Thirds;
+
+    /// <summary>Whether the centre cross is drawn.</summary>
+    public bool ShowsCentre => Grid == GridOverlay.Centre;
+
     /// <summary>Holds the live view open while the page shows, and lets go when it does not.</summary>
     public void Shown(bool shown)
     {
@@ -160,6 +176,11 @@ public sealed partial class LiveViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(Flip));
         OnPropertyChanged(nameof(Mirror));
         OnPropertyChanged(nameof(Grid));
+        OnPropertyChanged(nameof(PictureStretch));
+        OnPropertyChanged(nameof(PictureAngle));
+        OnPropertyChanged(nameof(PictureScaleX));
+        OnPropertyChanged(nameof(ShowsThirds));
+        OnPropertyChanged(nameof(ShowsCentre));
         Apply(parts.Controller.State);
     });
 
