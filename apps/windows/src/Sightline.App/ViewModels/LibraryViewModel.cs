@@ -182,8 +182,8 @@ public sealed partial class LibraryViewModel : ObservableObject, IDisposable
             (false, _, _) => ("No camera connected", "Connect a camera to see what is on its card."),
             (_, true, _) => ("Reading the card", "The camera is listing its files."),
             (_, _, null) when state.HoldsLivePicture => ("The card",
-                "Reading the card ends the live picture until the camera is switched off and on: "
-                + "it cannot show its picture and list its files at once."),
+                "Reading the card ends the live picture, which then needs the camera's battery taken out and put "
+                + "back: it cannot show its picture and list its files at once."),
             (_, _, null) => ("The card", "Read the card to see what is on it."),
             (_, _, { Count: 0 }) => ("The card is empty", "The camera says its card is empty, or that it has no card."),
             (_, _, var files) => (CardWords.Count(files), $"Copies go to {Folder}."),

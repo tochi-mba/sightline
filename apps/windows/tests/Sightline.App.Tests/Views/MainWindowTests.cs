@@ -9,6 +9,7 @@ using Shouldly;
 using Sightline.App.Tests.ViewModels;
 using Sightline.App.ViewModels;
 using Sightline.App.Views;
+using Sightline.Core.Camera;
 using Sightline.Core.Settings;
 
 namespace Sightline.App.Tests.Views;
@@ -110,13 +111,15 @@ public sealed class MainWindowTests
     }
 
     [AvaloniaFact]
-    public async Task Connected_the_picture_shows_with_the_shutter_and_settings_list_the_cameras_own()
+    public async Task Connected_the_picture_shows_once_asked_with_the_shutter_and_settings_list_the_cameras_own()
     {
         await using var app = App(Returning with { Grid = GridOverlay.Thirds });
         using var shell = new ShellViewModel(app.Parts);
         var window = Show(shell);
 
         _ = app.Controller.Connect();
+        await UntilAsync(() => Shown(Find<Button>(window, "ShowPicture")));
+        Click(Find<Button>(window, "ShowPicture"));
         await UntilAsync(() => Find<Image>(window, "Picture").Source is not null);
 
         Shown(Find<Image>(window, "Picture")).ShouldBeTrue();
@@ -140,6 +143,9 @@ public sealed class MainWindowTests
         using var shell = new ShellViewModel(app.Parts);
         var window = Show(shell);
         await app.ConnectedAsync();
+        await UntilAsync(() => shell.Live.Offered);
+        Find<TextBlock>(window, "PictureMessage").Text.ShouldBe(CameraWords.OfferedPicture);
+        Click(Find<Button>(window, "ShowPicture"));
         await UntilAsync(() => app.Controller.State.HoldsLivePicture);
 
         Click(Find<Button>(window, "LibraryTab"));

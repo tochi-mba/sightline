@@ -100,7 +100,7 @@ public sealed class CameraSession : IAsyncDisposable
     /// <summary>
     /// Whether this session holds the camera's live picture: its one stream connection is open and
     /// still running, so anything that ends it, such as browsing the card, costs the live picture until
-    /// the camera is switched off and on.
+    /// the camera's battery is taken out and put back.
     /// </summary>
     public bool HoldsLivePicture
     {
@@ -142,7 +142,7 @@ public sealed class CameraSession : IAsyncDisposable
     }
 
     /// <summary>
-    /// The live picture, frame after frame, until cancelled.
+    /// The live picture, frame after frame, until cancelled, which ends it quietly.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -171,7 +171,12 @@ public sealed class CameraSession : IAsyncDisposable
         using var pictures = live.Subscribe();
         while (true)
         {
-            yield return await pictures.NextAsync(timing.Stall, cancellationToken).ConfigureAwait(false);
+            if (await NextOrNothingAsync(pictures, cancellationToken).ConfigureAwait(false) is not { } frame)
+            {
+                yield break;
+            }
+
+            yield return frame;
         }
     }
 
@@ -202,6 +207,20 @@ public sealed class CameraSession : IAsyncDisposable
 
         await Control.DisposeAsync().ConfigureAwait(false);
         closing.Dispose();
+    }
+
+    /// <summary>The next picture, or nothing once the watcher has stopped watching.</summary>
+    /// <remarks>Apart from the iterator because C# will not yield inside a try with a catch.</remarks>
+    private async Task<CameraFrame?> NextOrNothingAsync(LiveFeed.Subscription pictures, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await pictures.NextAsync(timing.Stall, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
     }
 
     /// <summary>The session's one stream, started by whoever asks first.</summary>
@@ -302,17 +321,19 @@ public sealed record CameraSessionTiming(TimeSpan Start, TimeSpan Stall)
 
 /// <summary>
 /// The camera will not give this session a live picture, and asking again will not change that until
-/// the camera is switched off and on.
+/// its battery is taken out and put back.
 /// </summary>
 /// <remarks>
-/// The reference camera answers one stream connection per power-on, and ends it when its card is
-/// browsed; see PROTOCOL.md, "One stream per power-on".
+/// The reference camera answers one stream connection per power-on, ends it when its card is browsed,
+/// and leaves its own buttons stuck once it has ended, so it cannot even be switched off; see
+/// PROTOCOL.md, "One stream per power-on".
 /// </remarks>
 public sealed class LivePictureUnavailableException : Exception
 {
     /// <summary>What to do about it, said after every reason.</summary>
     public const string Advice =
-        "This camera gives one live picture each time it is switched on: switch it off and on to see it again.";
+        "This camera gives its live picture once each time it starts, and its own buttons stay stuck once it ends: "
+        + "take its battery out and put it back to see it again.";
 
     /// <summary>Creates the exception.</summary>
     public LivePictureUnavailableException(string message) : base(message)

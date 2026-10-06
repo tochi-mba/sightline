@@ -123,7 +123,7 @@ public sealed class CameraSessionTests : IAsyncDisposable
     }
 
     [Fact]
-    public async Task Cancelling_a_watcher_stops_its_pictures_and_leaves_the_stream_open()
+    public async Task Cancelling_a_watcher_ends_its_pictures_quietly_and_leaves_the_stream_open()
     {
         stream.Pace = TimeSpan.FromMilliseconds(30);
         stream.Frames.AddRange(Enumerable.Range(1, 10).Select(n => FakeRtspCamera.Jpeg(100 + n)));
@@ -131,14 +131,11 @@ public sealed class CameraSessionTests : IAsyncDisposable
         using var cancel = new CancellationTokenSource();
         var count = 0;
 
-        await Should.ThrowAsync<OperationCanceledException>(async () =>
+        await foreach (var _ in session.StreamFramesAsync(cancel.Token))
         {
-            await foreach (var _ in session.StreamFramesAsync(cancel.Token))
-            {
-                count++;
-                await cancel.CancelAsync();
-            }
-        });
+            count++;
+            await cancel.CancelAsync();
+        }
 
         count.ShouldBe(1);
         stream.IsConnected.ShouldBeTrue();

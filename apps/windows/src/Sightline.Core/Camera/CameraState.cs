@@ -80,6 +80,16 @@ public abstract record LiveView
         public static Off Instance { get; } = new();
     }
 
+    /// <summary>
+    /// Somebody is looking and the camera is connected, and the picture waits to be asked for: once it
+    /// has run, the camera's own buttons stay stuck until its battery is taken out and put back.
+    /// </summary>
+    public sealed record Offered : LiveView
+    {
+        /// <summary>The one value.</summary>
+        public static Offered Instance { get; } = new();
+    }
+
     /// <summary>Starting the stream.</summary>
     public sealed record Starting : LiveView
     {
@@ -102,8 +112,8 @@ public abstract record LiveView
     public sealed record Interrupted(string Reason) : LiveView;
 
     /// <summary>
-    /// The camera will not give a live picture again until it is switched off and on, for <paramref name="Reason"/>.
-    /// Nothing is tried again: the camera answers one stream per power-on.
+    /// The camera will not give a live picture again until its battery is taken out and put back, for
+    /// <paramref name="Reason"/>. Nothing is tried again: the camera answers one stream per power-on.
     /// </summary>
     public sealed record Unavailable(string Reason) : LiveView;
 }
@@ -249,8 +259,8 @@ public sealed record CameraState(
     public bool IsRecording => Status?.IsRecording == true;
 
     /// <summary>
-    /// Whether this connection has the camera's live picture, so reading the card would cost it until the
-    /// camera is switched off and on. A screen that reads the card asks first when this is true.
+    /// Whether this connection has the camera's live picture, so reading the card would end it until the
+    /// camera's battery is taken out and put back. A screen that reads the card asks first when this is true.
     /// </summary>
     public bool HoldsLivePicture { get; init; }
 }

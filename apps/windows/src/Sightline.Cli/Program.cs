@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Reflection;
 using Sightline.Core;
+using Sightline.Core.Camera;
 using Sightline.Core.Connectivity;
 using Sightline.Platform.Windows.Network;
 using Sightline.Platform.Windows.Wlan;
@@ -193,6 +194,7 @@ internal static class Program
         var frame = await session.GrabFrameAsync(TimeSpan.FromSeconds(15), cancellationToken);
         await File.WriteAllBytesAsync(path, frame.Jpeg, cancellationToken);
         Console.WriteLine($"  {frame.Width}x{frame.Height} picture saved to {Path.GetFullPath(path)} ({frame.Jpeg.Length:N0} bytes).");
+        Console.WriteLine($"  {CameraWords.ButtonsStuck}");
         return ExitCode.Success;
     }
 
@@ -350,8 +352,9 @@ internal static class Program
                 photo                             Take a photo onto the camera's card
                 record                            Start or stop recording to the card
                 snapshot [--out FILE]             Save one picture from the live view. The camera gives its
-                                                  live picture once each time it is switched on, and reading
-                                                  its card ends it.
+                                                  live picture once each time it starts, and its own buttons
+                                                  stay stuck afterwards until its battery is taken out and
+                                                  put back.
 
                 --version  --help
 

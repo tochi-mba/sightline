@@ -27,6 +27,7 @@ public sealed class LibraryViewModelTests
         app.Control.DownloadChunk = 1000;
         var shell = new ShellViewModel(app.Parts);
         await app.ConnectedAsync();
+        app.Controller.ShowLivePicture();
         await TestApp.EventuallyAsync(() => app.Controller.State.HoldsLivePicture);
         shell.GoCommand.Execute(Page.Library);
         shell.Library.RefreshCommand.Execute(null);
@@ -175,6 +176,7 @@ public sealed class LibraryViewModelTests
         await using var app = new TestApp(Returning);
         using var shell = new ShellViewModel(app.Parts);
         await app.ConnectedAsync();
+        app.Controller.ShowLivePicture();
         await TestApp.EventuallyAsync(() => app.Controller.State.HoldsLivePicture);
 
         shell.GoCommand.Execute(Page.Library);
@@ -182,8 +184,8 @@ public sealed class LibraryViewModelTests
         app.Controller.State.Library.Reading.ShouldBeFalse();
         shell.Library.Heading.ShouldBe("The card");
         shell.Library.Detail.ShouldBe(
-            "Reading the card ends the live picture until the camera is switched off and on: "
-            + "it cannot show its picture and list its files at once.");
+            "Reading the card ends the live picture, which then needs the camera's battery taken out and put "
+            + "back: it cannot show its picture and list its files at once.");
     }
 
     [AvaloniaFact]

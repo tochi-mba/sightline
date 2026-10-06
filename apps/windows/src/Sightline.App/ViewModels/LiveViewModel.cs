@@ -62,6 +62,11 @@ public sealed partial class LiveViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(ShutterCommand), nameof(UseVideoCommand), nameof(UsePhotosCommand))]
     private bool ready;
 
+    /// <summary>Whether the picture waits to be asked for, with what it costs said.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ShowPictureCommand))]
+    private bool offered;
+
     /// <summary>The picture rate, when the person asked to see it.</summary>
     [ObservableProperty]
     private string frameRate = "";
@@ -97,6 +102,10 @@ public sealed partial class LiveViewModel : ObservableObject, IDisposable
     /// <summary>Whether the centre cross is drawn.</summary>
     public bool ShowsCentre => Grid == GridOverlay.Centre;
 
+    /// <summary>Starts the live picture, which the camera gives once each time it starts.</summary>
+    [RelayCommand(CanExecute = nameof(Offered))]
+    private void ShowPicture() => parts.Controller.ShowLivePicture();
+
     /// <summary>Holds the live view open while the page shows, and lets go when it does not.</summary>
     public void Shown(bool shown)
     {
@@ -124,6 +133,7 @@ public sealed partial class LiveViewModel : ObservableObject, IDisposable
     internal void Apply(CameraState state)
     {
         Message = CameraWords.Picture(state);
+        Offered = state.Live is LiveView.Offered;
         Status = CameraWords.Status(state);
         ShutterLabel = CameraWords.Shutter(state);
         Recording = state.IsRecording;

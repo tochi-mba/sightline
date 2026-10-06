@@ -56,12 +56,20 @@ public sealed class CameraController : IAsyncDisposable
     private readonly Lock gate = new();
     private readonly SemaphoreSlim operations = new(1, 1);
     private readonly HashSet<string> liveHolders = [];
+
+    // Holders whose holding is itself the person asking for the picture, such as an armed Sentry.
+    private readonly HashSet<string> askingHolders = [];
     private CameraState state = CameraState.Initial;
     private Run? staying;
     private Connected? current;
     private CancellationTokenSource? live;
     private Task? liveTask;
     private bool browsing;
+
+    // Asked for by the person on the live page; and whether a picture has arrived since. Both are cleared
+    // when the person disconnects, and kept through a reconnect.
+    private bool pictureAsked;
+    private bool pictureRan;
     private CameraMode? cameraMode;
     private long frameNumber;
     private long noticeNumber;
@@ -139,15 +147,50 @@ public sealed class CameraController : IAsyncDisposable
             running.Cancel.Dispose();
         }
 
+        bool ran;
+        lock (gate)
+        {
+            ran = pictureRan;
+            pictureAsked = false;
+            pictureRan = false;
+        }
+
         Update(s => CameraState.Initial with { Mode = s.Mode });
+        if (ran)
+        {
+            // The camera is left with its buttons stuck; the person should hear it here, not find it out.
+            PostNotice(CameraWords.ButtonsStuck);
+        }
     }
 
-    /// <summary>Asks for the live view on behalf of <paramref name="holder"/>; it runs while anybody holds it.</summary>
-    public void HoldLive(string holder)
+    /// <summary>
+    /// Starts the live picture for whoever holds it, now that the person has asked: the camera gives it once
+    /// each time it starts, and its own buttons stay stuck once it has run, so it is never started unasked.
+    /// </summary>
+    public void ShowLivePicture()
+    {
+        lock (gate)
+        {
+            pictureAsked = true;
+        }
+
+        UpdateLive();
+    }
+
+    /// <summary>
+    /// Holds the live view open on behalf of <paramref name="holder"/>. It runs while anybody holds it, once
+    /// the picture has been asked for: by <see cref="ShowLivePicture"/>, or by a holder that is
+    /// <paramref name="asking"/>, whose holding is itself the person's request, as arming Sentry is.
+    /// </summary>
+    public void HoldLive(string holder, bool asking = false)
     {
         lock (gate)
         {
             liveHolders.Add(holder);
+            if (asking)
+            {
+                askingHolders.Add(holder);
+            }
         }
 
         UpdateLive();
@@ -159,6 +202,7 @@ public sealed class CameraController : IAsyncDisposable
         lock (gate)
         {
             liveHolders.Remove(holder);
+            askingHolders.Remove(holder);
         }
 
         UpdateLive();
@@ -840,7 +884,8 @@ public sealed class CameraController : IAsyncDisposable
         lock (gate)
         {
             var connected = current;
-            var wanted = connected is not null && liveHolders.Count > 0 && !browsing;
+            var asked = pictureAsked || askingHolders.Count > 0;
+            var wanted = connected is not null && liveHolders.Count > 0 && !browsing && asked;
             if (wanted && live is null)
             {
                 live = new CancellationTokenSource();
@@ -855,6 +900,7 @@ public sealed class CameraController : IAsyncDisposable
 
             shown = connected is null || liveHolders.Count == 0 ? LiveView.Off.Instance
                 : browsing ? LiveView.Paused.Instance
+                : !asked ? LiveView.Offered.Instance
                 : null;
         }
 
@@ -914,9 +960,12 @@ public sealed class CameraController : IAsyncDisposable
                         {
                             // The first picture starts the count: how long the stream took to start is not its rate.
                             window = Stopwatch.StartNew();
-                            Update(s => cancellationToken.IsCancellationRequested
-                                ? s
-                                : s with { Live = new LiveView.Playing(0), HoldsLivePicture = true });
+                            lock (gate)
+                            {
+                                pictureRan = true;
+                            }
+
+                            ShowLive(new LiveView.Playing(0), cancellationToken, holds: true);
                         }
                         else
                         {
@@ -939,11 +988,13 @@ public sealed class CameraController : IAsyncDisposable
                 catch (LivePictureUnavailableException unavailable)
                 {
                     // Asking again would open a connection the camera never answers, so this is where it stops.
-                    Update(s => cancellationToken.IsCancellationRequested
-                        ? s
-                        : s with { Live = new LiveView.Unavailable(unavailable.Message), HoldsLivePicture = false });
+                    ShowLive(new LiveView.Unavailable(unavailable.Message), cancellationToken, holds: false);
                     return;
                 }
+
+                // The pictures end quietly only when this run is stopped, and this is then the way out; after a
+                // quiet spell it lets the stream be watched again.
+                cancellationToken.ThrowIfCancellationRequested();
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -959,8 +1010,8 @@ public sealed class CameraController : IAsyncDisposable
     /// A run is stopped under the same lock this checks under, so a run that is stopping can never write
     /// Starting or Interrupted over the Off or Paused that stopping it showed.
     /// </remarks>
-    private void ShowLive(LiveView view, CancellationToken run) =>
-        Update(s => run.IsCancellationRequested ? s : s with { Live = view });
+    private void ShowLive(LiveView view, CancellationToken run, bool? holds = null) =>
+        Update(s => run.IsCancellationRequested ? s : s with { Live = view, HoldsLivePicture = holds ?? s.HoldsLivePicture });
 
     private Task<T> AskAsync<T>(Connected connected, Func<GpSockConnection, CancellationToken, Task<T>> request, TimeSpan? limit = null) =>
         AskCoreAsync(connected, request, limit ?? timing.Answer);

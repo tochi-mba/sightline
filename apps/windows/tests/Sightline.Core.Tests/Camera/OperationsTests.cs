@@ -24,6 +24,7 @@ public sealed class OperationsTests
 
         camera.Controller.HoldLive("window");
         camera.Controller.HoldLive("sentry");
+        camera.Controller.ShowLivePicture();
         (await camera.UntilAsync(s => s.Live is LiveView.Playing)).HoldsLivePicture.ShouldBeTrue();
         camera.Controller.ReleaseLive("window");
         // Still running for Sentry: playing, or between quick stalls on these shortened timings.
@@ -41,15 +42,65 @@ public sealed class OperationsTests
     }
 
     [Fact]
-    public async Task Holding_the_live_view_before_connecting_starts_it_once_connected()
+    public async Task The_picture_is_offered_rather_than_started_until_the_person_asks()
     {
         await using var camera = new ControllerHarness();
         camera.Controller.HoldLive("window");
         camera.State.Live.ShouldBeOfType<LiveView.Off>();
 
         await camera.ConnectedAsync();
+        await camera.UntilAsync(s => s.Live is LiveView.Offered);
+        await Task.Delay(300);
+        camera.Streams.ShouldBeEmpty();
+        camera.State.HoldsLivePicture.ShouldBeFalse();
 
-        (await camera.UntilAsync(s => s.Live is LiveView.Playing)).Live.ShouldBeOfType<LiveView.Playing>();
+        camera.Controller.ShowLivePicture();
+
+        (await camera.UntilAsync(s => s.Live is LiveView.Playing)).HoldsLivePicture.ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task A_holder_that_asks_starts_the_picture_while_it_holds_it_and_through_a_reconnect()
+    {
+        await using var camera = new ControllerHarness();
+        camera.Controller.HoldLive("sentry", asking: true);
+
+        await camera.ConnectedAsync();
+        await camera.UntilAsync(s => s.Live is LiveView.Playing);
+        camera.Controller.ReleaseLive("sentry");
+        camera.Controller.HoldLive("window");
+
+        (await camera.UntilAsync(s => s.Live is LiveView.Offered)).Live.ShouldBe(LiveView.Offered.Instance);
+    }
+
+    [Fact]
+    public async Task Leaving_a_camera_whose_picture_ran_says_its_buttons_are_stuck_and_the_offer_starts_over()
+    {
+        await using var camera = new ControllerHarness();
+        await camera.ConnectedAsync();
+        camera.Controller.HoldLive("window");
+        camera.Controller.ShowLivePicture();
+        await camera.UntilAsync(s => s.Live is LiveView.Playing);
+
+        await camera.Controller.DisconnectAsync();
+
+        camera.State.Notice!.Text.ShouldBe(CameraWords.ButtonsStuck);
+        camera.Link.PowerCycle();
+        await camera.ConnectedAsync();
+        (await camera.UntilAsync(s => s.Live is LiveView.Offered)).Live.ShouldBe(LiveView.Offered.Instance);
+    }
+
+    [Fact]
+    public async Task Leaving_a_camera_whose_picture_never_ran_says_nothing()
+    {
+        await using var camera = new ControllerHarness();
+        await camera.ConnectedAsync();
+        camera.Controller.HoldLive("window");
+        await camera.UntilAsync(s => s.Live is LiveView.Offered);
+
+        await camera.Controller.DisconnectAsync();
+
+        camera.State.Notice.ShouldBeNull();
     }
 
     [Fact]
@@ -65,7 +116,8 @@ public sealed class OperationsTests
         await camera.ConnectedAsync();
 
         camera.Controller.HoldLive("window");
-        var gone = (await camera.UntilAsync(s => s.Live is LiveView.Unavailable)).Live.ShouldBeOfType<LiveView.Unavailable>();
+        camera.Controller.ShowLivePicture();
+        var gone = (await camera.UntilAsync(s => s.Live is LiveView.Unavailable, seconds: 30)).Live.ShouldBeOfType<LiveView.Unavailable>();
 
         gone.Reason.ShouldBe("The camera ended its live picture. " + LivePictureUnavailableException.Advice);
         camera.Seen.ShouldContain(s => s.Live is LiveView.Playing && ((LiveView.Playing)s.Live).FramesPerSecond > 0);
@@ -84,6 +136,7 @@ public sealed class OperationsTests
         await camera.ConnectedAsync();
 
         camera.Controller.HoldLive("window");
+        camera.Controller.ShowLivePicture();
 
         var quiet = (await camera.UntilAsync(s => s.Live is LiveView.Interrupted)).Live.ShouldBeOfType<LiveView.Interrupted>();
         quiet.Reason.ShouldBe("The camera sent nothing for 0 seconds.");
@@ -100,6 +153,7 @@ public sealed class OperationsTests
         await camera.ConnectedAsync();
 
         camera.Controller.HoldLive("window");
+        camera.Controller.ShowLivePicture();
 
         var gone = (await camera.UntilAsync(s => s.Live is LiveView.Unavailable)).Live.ShouldBeOfType<LiveView.Unavailable>();
         gone.Reason.ShouldStartWith("The camera refused the video track (454).");
@@ -118,6 +172,7 @@ public sealed class OperationsTests
         };
         await camera.ConnectedAsync();
         camera.Controller.HoldLive("window");
+        camera.Controller.ShowLivePicture();
         await camera.UntilAsync(s => s.Live is LiveView.Playing);
         camera.Streams[0].HangUp();
         await camera.UntilAsync(s => s.Live is LiveView.Unavailable);
@@ -269,6 +324,7 @@ public sealed class OperationsTests
         await camera.ConnectedAsync();
 
         camera.Controller.HoldLive("window");
+        camera.Controller.ShowLivePicture();
 
         var playing = (await camera.UntilAsync(s => s.Live is LiveView.Playing { FramesPerSecond: > 0 })).Live;
         ((LiveView.Playing)playing).FramesPerSecond.ShouldBeInRange(5, 30);
@@ -288,6 +344,7 @@ public sealed class OperationsTests
         };
 
         camera.Controller.HoldLive("window");
+        camera.Controller.ShowLivePicture();
         await ControllerHarness.EventuallyAsync(() => Volatile.Read(ref pictures) > 0);
         await Task.Delay(200);
 

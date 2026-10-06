@@ -58,7 +58,7 @@ public sealed class ShellViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task Opening_joins_the_last_camera_without_consenting_for_anybody_and_shows_its_picture()
+    public async Task Opening_joins_the_last_camera_without_consenting_for_anybody_and_offers_its_picture()
     {
         var adapter = Adapters.DongleId;
         await using var app = new TestApp(Returning with { LastAdapter = adapter, LastCamera = "ActionCam_1", CameraPassword = "camera-pass" });
@@ -72,7 +72,10 @@ public sealed class ShellViewModelTests
         await TestApp.EventuallyAsync(() => shell.Camera.IsConnected);
         shell.ConnectionWord.ShouldBe("Connected");
         shell.ShowsConnect.ShouldBeFalse();
-        // The Live page shows first, and holds the picture open while it does.
+        // The Live page shows first and offers the picture, which starts only when asked for.
+        await TestApp.EventuallyAsync(() => shell.Live.Offered);
+        app.Link.Streams.ShouldBeEmpty();
+        shell.Live.ShowPictureCommand.Execute(null);
         await TestApp.EventuallyAsync(() => shell.Live.Picture is not null);
     }
 
@@ -107,6 +110,8 @@ public sealed class ShellViewModelTests
         await using var app = new TestApp(Returning);
         using var shell = new ShellViewModel(app.Parts);
         await app.ConnectedAsync();
+        await TestApp.EventuallyAsync(() => shell.Live.Offered);
+        shell.Live.ShowPictureCommand.Execute(null);
         await TestApp.EventuallyAsync(() => app.Controller.State.Live is LiveView.Playing);
 
         shell.GoCommand.Execute(Page.Library);
@@ -129,6 +134,7 @@ public sealed class ShellViewModelTests
         using var shell = new ShellViewModel(app.Parts);
         app.Control.AddFile('J', new DateTime(2026, 10, 4, 18, 35, 0), TestPictures.Jpeg(120));
         await app.ConnectedAsync();
+        app.Controller.ShowLivePicture();
         await TestApp.EventuallyAsync(() => app.Controller.State.HoldsLivePicture);
         shell.GoCommand.Execute(Page.Library);
         shell.Library.RefreshCommand.Execute(null);
@@ -137,7 +143,7 @@ public sealed class ShellViewModelTests
         shell.GoCommand.Execute(Page.Live);
 
         await TestApp.EventuallyAsync(() => app.Controller.State.Live is LiveView.Unavailable);
-        shell.Live.Message.ShouldBe("No live picture until the camera is switched off and on. It gives one each time it starts.");
+        shell.Live.Message.ShouldBe("The live picture has ended. Take the camera's battery out and put it back to see it again.");
     }
 
     [AvaloniaFact]

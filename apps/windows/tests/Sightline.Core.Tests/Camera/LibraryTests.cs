@@ -52,10 +52,11 @@ public sealed class LibraryTests
     }
 
     [Fact]
-    public async Task Reading_the_card_ends_the_live_picture_until_the_camera_is_switched_off_and_on()
+    public async Task Reading_the_card_ends_the_live_picture_until_the_camera_restarts()
     {
         await using var camera = await WithCardAsync();
         camera.Controller.HoldLive("window");
+        camera.Controller.ShowLivePicture();
         (await camera.UntilAsync(s => s.Live is LiveView.Playing)).HoldsLivePicture.ShouldBeTrue();
 
         var files = await ListedAsync(camera);
@@ -64,6 +65,18 @@ public sealed class LibraryTests
         camera.Seen.ShouldContain(s => s.Live is LiveView.Paused);
         (await camera.UntilAsync(s => s.Live is LiveView.Unavailable)).HoldsLivePicture.ShouldBeFalse();
         camera.Streams.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Files_whose_thumbnails_the_camera_will_not_give_are_listed_anyway()
+    {
+        await using var camera = await WithCardAsync();
+        camera.Control.ForcedRefusals[GpSockCommand.PlaybackGetThumbnail] = NakCode.GetThumbnailFail;
+
+        var files = await ListedAsync(camera);
+
+        files.Count.ShouldBe(2);
+        camera.State.Library.Thumbnails.ShouldBeEmpty();
     }
 
     [Fact]

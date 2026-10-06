@@ -132,7 +132,8 @@ public sealed class SentryRunner : IDisposable
 
         StatusChanged?.Invoke(next);
         controller.FrameArrived += Look;
-        controller.HoldLive(LiveHolder);
+        // Arming is the person asking for the picture, for as long as Sentry stays armed: it watches nothing else.
+        controller.HoldLive(LiveHolder, asking: true);
     }
 
     /// <summary>Stands Sentry down, stopping a recording it started. Harmless when not armed.</summary>
