@@ -39,4 +39,5 @@ protocol as measured on real hardware.
 | `./gradlew :android:app:check` | Lints and tests the Android app under Robolectric: logic at 100%, screens at 99% of lines. See `docs/ANDROID.md`. |
 | `./gradlew :android:app:assembleDebug` | Builds the debug APK. |
 | `./tools/scripts/bench.ps1` | Runs the benchmark suite and compares it with the baseline; `-Record` replaces the baseline. See `docs/PERFORMANCE.md`. |
-| `python -m unittest discover tools/scripts/tests` | Tests the repository's own scripts: the site checker and the benchmark comparison. |
+| `python -m unittest discover tools/scripts/tests` | Tests the repository's own scripts: the site checker, the benchmark comparison and the icon generator, and holds the committed icon to the generator. |
+| `python tools/scripts/generate_icon.py` | Redraws the Windows icon from the site's favicon geometry. Never edit the `.ico` by hand. |
