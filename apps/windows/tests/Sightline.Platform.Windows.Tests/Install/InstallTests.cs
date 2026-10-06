@@ -33,12 +33,28 @@ public sealed class PathRegistrationTests
         PathRegistration.Add(path, Folder).ShouldBeTrue();
         PathRegistration.Add(path, Folder + "\\").ShouldBeFalse();
 
-        path.Value.ShouldBe($@"%USERPROFILE%\bin;C:\Tools;{Folder}");
+        path.Value.ShouldBe($@"%USERPROFILE%\bin;C:\Tools;{Folder};");
         path.Writes.ShouldBe(1);
         var empty = new MemoryPath();
         PathRegistration.Add(empty, Folder).ShouldBeTrue();
         empty.Value.ShouldBe(Folder);
         PathRegistration.Add(empty, "  ").ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData(@"C:\Tools;C:\Other")]
+    [InlineData(@"C:\Tools;C:\Other;")]
+    [InlineData(@"C:\Tools;;C:\Other;")]
+    [InlineData(";")]
+    public void Installing_and_uninstalling_gives_back_the_path_exactly_as_it_was(string before)
+    {
+        // Found on 2026-10-06: an install and uninstall dropped the trailing separator of a real PATH.
+        var path = new MemoryPath(before);
+
+        PathRegistration.Add(path, Folder).ShouldBeTrue();
+        PathRegistration.Remove(path, Folder).ShouldBeTrue();
+
+        path.Value.ShouldBe(before);
     }
 
     [Fact]

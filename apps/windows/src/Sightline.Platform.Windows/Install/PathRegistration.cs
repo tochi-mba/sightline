@@ -66,6 +66,10 @@ public sealed class RegistryUserPathStore(string keyPath = "Environment") : IUse
 public static partial class PathRegistration
 {
     /// <summary>Adds <paramref name="directory"/> unless it is already listed.</summary>
+    /// <remarks>
+    /// The PATH keeps its own style: one that ends with a separator gets the folder and then a separator,
+    /// so <see cref="Remove"/> gives back exactly the text it was given, not a tidied copy.
+    /// </remarks>
     /// <returns>Whether the stored PATH changed.</returns>
     public static bool Add(IUserPathStore store, string directory)
     {
@@ -77,7 +81,9 @@ public static partial class PathRegistration
             return false;
         }
 
-        store.Write(current.Length == 0 ? entry : $"{current.TrimEnd(';')};{entry}");
+        store.Write(current.Length == 0 ? entry
+            : current.EndsWith(';') ? $"{current}{entry};"
+            : $"{current};{entry}");
         return true;
     }
 
