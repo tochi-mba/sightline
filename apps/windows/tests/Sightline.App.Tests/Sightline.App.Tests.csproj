@@ -8,8 +8,10 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
-    <PackageReference Include="xunit" />
-    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="xunit.v3.mtp-off" />
+    <!-- The first runner that knows xUnit v3; the v2 suites keep the older one. -->
+    <PackageReference Include="xunit.runner.visualstudio" VersionOverride="3.1.5" />
+    <PackageReference Include="Avalonia.Headless.XUnit" />
     <PackageReference Include="Shouldly" />
     <PackageReference Include="coverlet.collector" />
   </ItemGroup>

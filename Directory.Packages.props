@@ -36,6 +36,10 @@
     <PackageVersion Include="Shouldly" Version="4.2.1" />
     <PackageVersion Include="xunit" Version="2.9.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- The app's suite runs on xUnit v3, which Avalonia's headless testing needs; the others stay on v2.
+         These are the versions REX Technologies' Flint app already tests its Avalonia 12 window with. -->
+    <PackageVersion Include="Avalonia.Headless.XUnit" Version="12.1.3" />
+    <PackageVersion Include="xunit.v3.mtp-off" Version="3.2.2" />
   </ItemGroup>
 
 </Project>

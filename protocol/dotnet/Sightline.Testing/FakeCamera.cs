@@ -48,6 +48,9 @@ public sealed class FakeCamera : ICameraTransport
     /// <summary>How long the camera takes over each answer, as a busy one does.</summary>
     public TimeSpan AnswerDelay { get; set; }
 
+    /// <summary>The thumbnail sent for a file: a token by default, which only looks like a JPEG to the protocol.</summary>
+    public Func<FakeFile, byte[]> ThumbnailOf { get; set; } = file => [0xFF, 0xD8, (byte)file.Index, 0xFF, 0xD9];
+
     /// <summary>Commands to refuse, and why, in place of the usual answer.</summary>
     public Dictionary<GpSockCommand, NakCode> ForcedRefusals { get; } = [];
 
@@ -348,7 +351,7 @@ public sealed class FakeCamera : ICameraTransport
                     break;
                 }
 
-                Ack(command, [0xFF, 0xD8, (byte)pictured.Index, 0xFF, 0xD9]);
+                Ack(command, ThumbnailOf(pictured));
                 Ack(command, []);
                 break;
 

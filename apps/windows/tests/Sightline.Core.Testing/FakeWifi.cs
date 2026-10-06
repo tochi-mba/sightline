@@ -25,10 +25,16 @@ public sealed class FakeWlan : IWlanClient
 
     public IReadOnlyList<WifiNetwork> Networks(Guid adapter) => Visible.GetValueOrDefault(adapter) ?? [];
 
-    public Task ScanAsync(Guid adapter, CancellationToken cancellationToken)
+    /// <summary>When set, a scan takes until it is given up, as one can on a busy adapter.</summary>
+    public bool ScanWaits { get; set; }
+
+    public async Task ScanAsync(Guid adapter, CancellationToken cancellationToken)
     {
         Record($"scan {adapter}");
-        return Task.CompletedTask;
+        if (ScanWaits)
+        {
+            await Task.Delay(Timeout.Infinite, cancellationToken);
+        }
     }
 
     public void SaveProfile(Guid adapter, string profileXml)

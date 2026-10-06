@@ -29,6 +29,9 @@ public sealed class WindowsSentryActions : ISentryActions
     public static string DefaultFolder { get; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Sightline", "Sentry");
 
+    /// <summary>Where alarm pictures are saved.</summary>
+    public string Folder => folder;
+
     /// <summary>Raised for each alarm, from Sentry's thread.</summary>
     public event Action<AlarmNotice>? Raised;
 
