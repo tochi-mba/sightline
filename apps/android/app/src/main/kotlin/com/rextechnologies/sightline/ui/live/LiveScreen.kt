@@ -31,6 +31,7 @@ import com.rextechnologies.sightline.core.camera.CameraState
 import com.rextechnologies.sightline.core.camera.CaptureMode
 import com.rextechnologies.sightline.core.camera.Connection
 import com.rextechnologies.sightline.core.camera.LiveView
+import com.rextechnologies.sightline.core.camera.OFFERED_PICTURE
 import com.rextechnologies.sightline.core.camera.Task
 import com.rextechnologies.sightline.core.settings.AppSettings
 import com.rextechnologies.sightline.core.settings.GridOverlay
@@ -83,7 +84,7 @@ fun LiveScreen(graph: AppGraph, platform: Platform, camera: CameraState, wide: B
     val picture: @Composable (Modifier) -> Unit = { modifier ->
         Box(modifier) {
             LivePicture(graph.controller.frames, settings, Modifier.fillMaxSize())
-            PictureOverlays(camera, settings)
+            PictureOverlays(camera, settings) { graph.controller.showLivePicture() }
             if (hudOn) {
                 HudOverlay(graph, Modifier.fillMaxSize())
             }
@@ -135,7 +136,7 @@ data class LiveSettings(
 
 /** What sits over the picture: the recording badge, the frame rate, and why the picture is not moving. */
 @Composable
-private fun PictureOverlays(camera: CameraState, settings: LiveSettings) {
+private fun PictureOverlays(camera: CameraState, settings: LiveSettings, showPicture: () -> Unit) {
     Box(Modifier.fillMaxSize().padding(RexSpace.Compact)) {
         if (camera.isRecording) {
             RecordingBadge(camera.status?.clipLength, Modifier.align(Alignment.TopStart))
@@ -146,7 +147,19 @@ private fun PictureOverlays(camera: CameraState, settings: LiveSettings) {
             Badge("%.1f fps".format(Locale.ROOT, live.framesPerSecond), Modifier.align(Alignment.TopEnd))
         }
 
-        pictureMessage(camera)?.let { Badge(it, Modifier.align(Alignment.BottomCenter)) }
+        if (camera.live == LiveView.Offered) {
+            // Never started unasked: once it has run, the camera's own buttons stay stuck.
+            Column(
+                Modifier.align(Alignment.Center).padding(RexSpace.Medium),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(RexSpace.Small),
+            ) {
+                RexText(text = OFFERED_PICTURE, style = RexType.BodyMedium.copy(color = RexColors.Text))
+                OutlineAction(text = "Show the live picture", onClick = showPicture)
+            }
+        } else {
+            pictureMessage(camera)?.let { Badge(it, Modifier.align(Alignment.BottomCenter)) }
+        }
     }
 }
 
@@ -156,9 +169,12 @@ fun pictureMessage(camera: CameraState): String? {
     return when {
         connection is Connection.Reconnecting ->
             "Reconnecting to the camera, attempt ${connection.attempt} of ${connection.of}"
-        camera.live is LiveView.Interrupted -> "The picture stopped. Starting it again."
+        camera.live is LiveView.Interrupted -> "The camera stopped sending its picture. Waiting for it."
+        camera.live is LiveView.Unavailable ->
+            "The live picture has ended. Take the camera's battery out and put it back to see it again."
+        camera.live == LiveView.Offered -> OFFERED_PICTURE
         camera.live == LiveView.Starting -> "Starting the picture"
-        camera.live == LiveView.Paused -> "Paused while the card is read"
+        camera.live == LiveView.Paused -> "The card is being read"
         else -> null
     }
 }

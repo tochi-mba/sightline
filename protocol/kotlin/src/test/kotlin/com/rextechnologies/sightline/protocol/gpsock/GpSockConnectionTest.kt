@@ -212,12 +212,11 @@ class GpSockConnectionTest {
     }
 
     @Test
-    fun `a thumbnail is refused while the camera is still streaming`(): Unit = runBlocking {
-        val (connection, _) = open {
-            addFiles(2)
-            isStreaming = true
-        }
+    fun `a thumbnail is refused while the camera is streaming`(): Unit = runBlocking {
+        // Browse mode stops the stream; starting it again there is what leaves the camera busy.
+        val (connection, _) = open { addFiles(2) }
         connection.setMode(CameraMode.Browse)
+        connection.startStreaming()
 
         val refused = assertFailsWith<GpSockRefusedException> { connection.getThumbnail(1) }
 

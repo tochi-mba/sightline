@@ -1,8 +1,7 @@
 package com.rextechnologies.sightline.protocol
 
-import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
-import java.io.IOException
 import java.nio.ByteBuffer
 import kotlin.time.Duration
 
@@ -14,9 +13,15 @@ import kotlin.time.Duration
  * interleaved framing — but only once the control channel has started the stream, which is what
  * [streamStarted] asks. Until then, and after the last frame unless told to close, it simply goes
  * quiet, as the real one does. The .NET tests stand the same camera behind their session.
+ *
+ * Like the real one it cannot be stopped: TEARDOWN answers 501 and PAUSE answers 200, and the pictures
+ * keep coming either way. Only the camera can end it, which [hangUp] does as browse mode does on the real
+ * camera. That the camera answers one connection per power-on is the business of whoever hands these
+ * out; [neverAnswers] is how a refused one looks.
  */
 class FakeRtspCamera : CameraTransport {
     private val outbox = ArrayDeque<ByteArray>()
+    private val hungUp = CompletableDeferred<Unit>()
     private var sequence = 0
 
     /** Whether the control channel has started the media flow; no packets flow until it has. */
@@ -40,8 +45,8 @@ class FakeRtspCamera : CameraTransport {
     /** A verb the camera never answers, to stand for a wedged server. */
     var neverAnswers: String? = null
 
-    /** When set, a TEARDOWN fails the way a dropped connection does. */
-    var teardownFails = false
+    /** When set, reading after the last frame fails with this, as a connection that drops does. */
+    var breaksWith: Exception? = null
 
     /** How long each read after PLAY waits before handing anything over, as a real frame rate spaces them. */
     var pace: Duration = Duration.ZERO
@@ -84,7 +89,11 @@ class FakeRtspCamera : CameraTransport {
                 }
             }
 
-            "TEARDOWN" -> if (teardownFails) throw IOException("The connection was reset.") else reply(200, "")
+            // Listed by OPTIONS, and not implemented: the stream carries on regardless.
+            "TEARDOWN" -> reply(501, "")
+
+            // Answered, and ignored.
+            "PAUSE" -> reply(200, "")
             else -> reply(200, "", "Public" to "DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE")
         }
     }
@@ -96,12 +105,14 @@ class FakeRtspCamera : CameraTransport {
 
         val next = outbox.removeFirstOrNull()
         if (next == null) {
-            if (closesAfterFrames && "PLAY" in verbs) {
+            breaksWith?.let { if ("PLAY" in verbs) throw it }
+            if ((closesAfterFrames && "PLAY" in verbs) || hungUp.isCompleted) {
                 return 0
             }
 
-            // Quiet: nothing comes until whoever is reading gives up.
-            awaitCancellation()
+            // Quiet: nothing comes until whoever is reading gives up, or the camera hangs up.
+            hungUp.await()
+            return 0
         }
 
         // At most the reader's buffer, like a real socket; the remainder waits its turn.
@@ -114,13 +125,24 @@ class FakeRtspCamera : CameraTransport {
         return take
     }
 
+    /** The camera ends the connection, as entering browse mode does: what is in flight is dropped. */
+    fun hangUp() {
+        outbox.clear()
+        hungUp.complete(Unit)
+    }
+
     override fun close() {
         isConnected = false
         wasClosed = true
     }
 
     private fun reply(status: Int, body: String, header: Pair<String, String>? = null) {
-        val text = StringBuilder("RTSP/1.0 $status ${if (status == 200) "OK" else "Error"}\r\nCSeq: 1\r\n")
+        val reason = when (status) {
+            200 -> "OK"
+            501 -> "Not Implemented"
+            else -> "Error"
+        }
+        val text = StringBuilder("RTSP/1.0 $status $reason\r\nCSeq: 1\r\n")
         header?.let { (name, value) -> text.append(name).append(": ").append(value).append("\r\n") }
         if (body.isNotEmpty()) {
             text.append("Content-Length: ").append(body.toByteArray(Charsets.UTF_8).size).append("\r\n")

@@ -29,12 +29,22 @@ import kotlin.time.Duration.Companion.minutes
  * A controller driving a fake camera over a fake network, on the test's virtual clock.
  *
  * The camera describes itself with the reference camera's own menu, so every test runs against the
- * twenty-one settings a real one has. Each live view gets a fresh fake stream, as each gets a fresh
- * connection on the wire.
+ * twenty-one settings a real one has. It keeps the reference camera's rule for its picture: it answers
+ * the first stream connection after it is switched on and no other, until [powerCycle]; and browse mode
+ * hangs up the one it is serving.
  */
 class ControllerHarness(test: TestScope) {
-    val control = FakeCamera().apply { menuXml = referenceMenu() }
+    val control = FakeCamera().apply {
+        menuXml = referenceMenu()
+        enteredBrowse = { streams.forEach(FakeRtspCamera::hangUp) }
+    }
     val streams = mutableListOf<FakeRtspCamera>()
+    private var served = 0
+
+    /** Switches the camera off and on: its next stream connection is answered again. */
+    fun powerCycle() {
+        served = 0
+    }
 
     /** How each new stream is set up before the controller opens it. */
     var stream: FakeRtspCamera.() -> Unit = { frames += FakeRtspCamera.jpeg(600) }
@@ -104,6 +114,11 @@ class ControllerHarness(test: TestScope) {
             FakeRtspCamera().apply {
                 streamStarted = { control.isStreaming }
                 stream()
+                if (served++ > 0) {
+                    // A connection after the first since power-on: accepted, and never answered.
+                    neverAnswers = neverAnswers ?: "DESCRIBE"
+                }
+
                 streams += this
             }
         }

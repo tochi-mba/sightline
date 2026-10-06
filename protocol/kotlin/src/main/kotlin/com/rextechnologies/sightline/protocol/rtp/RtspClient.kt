@@ -87,9 +87,6 @@ class RtspClient(private val transport: CameraTransport, host: String) : Closeab
     /** Starts the stream. */
     suspend fun play(): RtspReply = send("PLAY", baseUrl, mapOf("Range" to "npt=0.000-"))
 
-    /** Ends the session. */
-    suspend fun teardown(): RtspReply = send("TEARDOWN", baseUrl, emptyMap())
-
     /**
      * Reads whatever stream bytes have arrived, for feeding to a reassembler.
      *

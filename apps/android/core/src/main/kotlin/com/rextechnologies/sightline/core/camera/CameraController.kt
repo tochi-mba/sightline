@@ -12,6 +12,7 @@ import com.rextechnologies.sightline.core.link.CameraNetwork
 import com.rextechnologies.sightline.core.session.CameraSession
 import com.rextechnologies.sightline.core.session.CameraSessionTiming
 import com.rextechnologies.sightline.core.session.CameraTimeoutException
+import com.rextechnologies.sightline.core.session.LivePictureUnavailableException
 import com.rextechnologies.sightline.protocol.gpsock.CameraFile
 import com.rextechnologies.sightline.protocol.gpsock.CameraMode
 import com.rextechnologies.sightline.protocol.gpsock.GpSockConnection
@@ -56,8 +57,10 @@ import kotlin.time.TimeSource
  * 1. **One camera operation at a time.** A shutter press, a setting and a status poll all go down one
  *    control channel, and an operation that switches the camera's mode must finish before another
  *    starts, or the second runs in the wrong mode.
- * 2. **The card is read with the live view stopped.** The camera refuses to browse its card while it
- *    streams, so reading the card pauses the picture and starts it again after.
+ * 2. **The camera gives one live picture per power-on.** It answers one stream connection each time
+ *    it is switched on, and browsing its card hangs that one up. So the stream is opened once and
+ *    shared, a picture the camera will not give again is said rather than retried, and reading the
+ *    card is something a screen asks before doing once the picture has been seen.
  * 3. **Nothing waits on the camera forever.** A camera whose Wi-Fi is half asleep still accepts a
  *    connection and then answers nothing, so every request has a deadline, a download has a stall
  *    detector, and a camera that stops answering is treated as lost and reconnected.
@@ -87,6 +90,15 @@ class CameraController(
 
     private val operations = Mutex()
     private val liveHolders = mutableSetOf<String>()
+
+    /** Holders whose holding is itself the person asking for the picture, such as an armed Sentry. */
+    private val askingHolders = mutableSetOf<String>()
+
+    /** Asked for by the person on the live screen; cleared when the person disconnects, kept through a reconnect. */
+    private var pictureAsked = false
+
+    /** Whether a picture has arrived since the person last connected, so leaving can say what it costs. */
+    private var pictureRan = false
     private var connecting: Job? = null
     private var current: Connected? = null
     private var live: Job? = null
@@ -121,22 +133,44 @@ class CameraController(
         connecting?.cancelAndJoin()
         connecting = null
         mutableFrames.value = null
+        val ran = pictureRan
+        pictureAsked = false
+        pictureRan = false
         mutableState.update { CameraState(mode = it.mode) }
+        if (ran) {
+            // The camera is left with its buttons stuck; the person should hear it here, not find it out.
+            notice(BUTTONS_STUCK)
+        }
     }
 
     /**
-     * Asks for the live view on behalf of [holder], such as the screen showing it or Sentry watching
-     * it. The stream runs while anybody holds it and the camera is connected, and stops when the last
-     * holder lets go, which spares the camera's battery and the phone's.
+     * Starts the live picture for whoever holds it, now that the person has asked: the camera gives it once
+     * each time it starts, and its own buttons stay stuck once it has run, so it is never started unasked.
      */
-    fun holdLive(holder: String) {
+    fun showLivePicture() {
+        pictureAsked = true
+        updateLive()
+    }
+
+    /**
+     * Holds the live view open on behalf of [holder], such as the screen showing it or Sentry watching it.
+     * It runs while anybody holds it and the camera is connected, once the picture has been asked for: by
+     * [showLivePicture], or by a holder that is [asking], whose holding is itself the person's request, as
+     * arming Sentry is. Letting go keeps the camera's one stream, and stops only the watching.
+     */
+    fun holdLive(holder: String, asking: Boolean = false) {
         liveHolders += holder
+        if (asking) {
+            askingHolders += holder
+        }
+
         updateLive()
     }
 
     /** Lets go of the live view on behalf of [holder]. */
     fun releaseLive(holder: String) {
         liveHolders -= holder
+        askingHolders -= holder
         updateLive()
     }
 
@@ -405,7 +439,7 @@ class CameraController(
             }
 
             val session = try {
-                CameraSession.open(lease::transport, timing = sessionTiming)
+                CameraSession.open(lease::transport, scope, timing = sessionTiming, timeSource = timeSource)
             } catch (failure: Exception) {
                 rethrowCancellation(failure)
                 return Attempt.Unreachable(Problem.whileTalking(failure))
@@ -605,6 +639,8 @@ class CameraController(
                     }
                 }
                 browsing = false
+                // The camera hung up its stream to browse, and will not answer another until it restarts.
+                mutableState.update { it.copy(holdsLivePicture = false) }
                 updateLive()
             }
         }
@@ -686,7 +722,8 @@ class CameraController(
 
     private fun updateLive() {
         val connected = current
-        val wanted = connected != null && liveHolders.isNotEmpty() && !browsing
+        val asked = pictureAsked || askingHolders.isNotEmpty()
+        val wanted = connected != null && liveHolders.isNotEmpty() && !browsing && asked
         // A live job only ever ends by being cancelled here or in stopLive, both of which forget it, so
         // one that is remembered is running.
         val running = live
@@ -700,6 +737,7 @@ class CameraController(
         val shown = when {
             connected == null || liveHolders.isEmpty() -> LiveView.Off
             browsing -> LiveView.Paused
+            !asked -> LiveView.Offered
             else -> null
         }
         if (shown != null) {
@@ -713,23 +751,25 @@ class CameraController(
         updateLive()
     }
 
-    /** Streams pictures into [frames] until cancelled, starting the stream again whenever it fails. */
+    /**
+     * Shows the camera's pictures in [frames] until cancelled. A quiet spell is said and waited out on the
+     * same stream; a picture the camera will not give again ends it.
+     */
     private suspend fun runLive(connected: Connected) {
-        var failures = 0
+        mutableState.update { it.copy(live = LiveView.Starting) }
         while (true) {
-            mutableState.update { it.copy(live = LiveView.Starting) }
             var window: TimeMark? = null
             var windowFrames = 0
-            val reason = try {
+            try {
                 connected.session.frames().collect { frame ->
                     mutableFrames.value = LiveFrame(frame.jpeg, frame.width, frame.height, ++frameNumber)
-                    failures = 0
                     val started = window
                     if (started == null) {
                         // The first picture starts the count: how long the stream took to start is not
                         // its frame rate, and counting it would understate every first second.
                         window = timeSource.markNow()
-                        mutableState.update { it.copy(live = LiveView.Playing(0.0)) }
+                        pictureRan = true
+                        mutableState.update { it.copy(live = LiveView.Playing(0.0), holdsLivePicture = true) }
                     } else {
                         windowFrames++
                         val elapsed = started.elapsedNow()
@@ -741,15 +781,16 @@ class CameraController(
                         }
                     }
                 }
-                "The camera ended the live view."
-            } catch (failure: Exception) {
-                rethrowCancellation(failure)
-                Problem.whileTalking(failure).detail
+            } catch (quiet: CameraTimeoutException) {
+                // The stream is still open; watching it again costs nothing.
+                mutableState.update { it.copy(live = LiveView.Interrupted(quiet.message)) }
+            } catch (unavailable: LivePictureUnavailableException) {
+                // Asking again would open a connection the camera never answers, so this is where it stops.
+                mutableState.update {
+                    it.copy(live = LiveView.Unavailable(unavailable.message), holdsLivePicture = false)
+                }
+                return
             }
-
-            failures++
-            mutableState.update { it.copy(live = LiveView.Interrupted(reason)) }
-            delay(minOf(timing.liveRetry * failures, timing.liveRetryCap))
         }
     }
 
@@ -817,8 +858,6 @@ class CameraController(
  * @property longAnswer For a request answered in many frames: the menu, or the card's file list.
  * @property transferStall For a download to go without a byte before it is called stalled.
  * @property statusInterval Between status polls while connected.
- * @property liveRetry After a live view fails, times the failures in a row, before it is started again.
- * @property liveRetryCap The longest wait before starting the live view again.
  * @property reconnectDelay After a camera is lost, times the attempt number, before trying again.
  * @property reconnectAttempts How many times a lost camera is tried before giving up.
  */
@@ -827,8 +866,6 @@ data class ControllerTiming(
     val longAnswer: Duration,
     val transferStall: Duration,
     val statusInterval: Duration,
-    val liveRetry: Duration,
-    val liveRetryCap: Duration,
     val reconnectDelay: Duration,
     val reconnectAttempts: Int,
 ) {
@@ -839,8 +876,6 @@ data class ControllerTiming(
             longAnswer = 60.seconds,
             transferStall = 15.seconds,
             statusInterval = 2.seconds,
-            liveRetry = 2.seconds,
-            liveRetryCap = 10.seconds,
             reconnectDelay = 3.seconds,
             reconnectAttempts = 5,
         )

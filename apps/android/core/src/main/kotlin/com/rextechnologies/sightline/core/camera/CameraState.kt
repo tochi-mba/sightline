@@ -40,17 +40,32 @@ sealed interface LiveView {
     /** Nobody is watching, or there is no camera. */
     data object Off : LiveView
 
+    /**
+     * Somebody is looking and the camera is connected, and the picture waits to be asked for: once it has
+     * run, the camera's own buttons stay stuck until its battery is taken out and put back.
+     */
+    data object Offered : LiveView
+
     /** Starting the stream. */
     data object Starting : LiveView
 
     /** Pictures are arriving, [framesPerSecond] of them a second over the last second. */
     data class Playing(val framesPerSecond: Double) : LiveView
 
-    /** Stopped while the camera's card is being read, which the camera cannot do while streaming. */
+    /**
+     * Stopped while the camera's card is being read, which the camera cannot do while streaming. Reading
+     * the card ends the camera's live picture, so what follows is [Unavailable].
+     */
     data object Paused : LiveView
 
-    /** The stream failed for [reason]; it is started again shortly. */
+    /** The stream went quiet for [reason]; it is still open, and watched again at once. */
     data class Interrupted(val reason: String) : LiveView
+
+    /**
+     * The camera will not give a live picture again until its battery is taken out and put back, for
+     * [reason]. Nothing is tried again: the camera answers one stream per power-on.
+     */
+    data class Unavailable(val reason: String) : LiveView
 }
 
 /** One picture from the live view. [number] counts up, so the same bytes twice are still two frames. */
@@ -162,6 +177,15 @@ enum class Task {
  */
 data class Notice(val id: Long, val text: String)
 
+/** What showing the live picture costs, said before it is asked for. */
+const val OFFERED_PICTURE =
+    "The live picture is off. Once it has run, the camera's own buttons stay stuck until its battery is taken out " +
+        "and put back."
+
+/** Said on leaving a camera whose live picture ran: what it now needs. */
+const val BUTTONS_STUCK =
+    "The camera's own buttons stay stuck after its live picture until its battery is taken out and put back."
+
 /** Everything the screens show about the camera. */
 data class CameraState(
     val connection: Connection = Connection.Idle,
@@ -174,6 +198,11 @@ data class CameraState(
     val library: Library = Library(),
     val task: Task? = null,
     val notice: Notice? = null,
+    /**
+     * Whether this connection has the camera's live picture, so reading the card would end it until the
+     * camera's battery is taken out and put back. A screen that reads the card asks first when this is true.
+     */
+    val holdsLivePicture: Boolean = false,
 ) {
     /** Whether commands are accepted. */
     val isConnected: Boolean get() = connection == Connection.Connected

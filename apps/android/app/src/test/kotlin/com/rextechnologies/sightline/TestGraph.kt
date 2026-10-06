@@ -76,15 +76,27 @@ class RecordedSentryActions : SentryActions {
 }
 
 /**
- * The shared fake camera behind a fake network: every join succeeds unless told otherwise, and every live
- * view gets a fresh fake stream.
+ * The shared fake camera behind a fake network: every join succeeds unless told otherwise. The camera
+ * keeps the reference camera's rule for its picture: it answers the first stream connection after it is
+ * switched on and no other, until [powerCycle]; and browse mode hangs up the one it is serving.
  */
 class FakeLink(private val control: FakeCamera) : CameraLink {
     val requests = mutableListOf<CameraNetwork>()
     val failures = ArrayDeque<LinkFailure>()
     var waits = false
     var stream: FakeRtspCamera.() -> Unit = { frames += TestGraph.picture() }
+    val streams = mutableListOf<FakeRtspCamera>()
     private val leases = mutableListOf<Lease>()
+    private var served = 0
+
+    init {
+        control.enteredBrowse = { streams.forEach(FakeRtspCamera::hangUp) }
+    }
+
+    /** Switches the camera off and on: its next stream connection is answered again. */
+    fun powerCycle() {
+        served = 0
+    }
 
     override suspend fun join(network: CameraNetwork): CameraLinkLease {
         requests += network
@@ -105,6 +117,12 @@ class FakeLink(private val control: FakeCamera) : CameraLink {
             FakeRtspCamera().apply {
                 streamStarted = { control.isStreaming }
                 stream()
+                if (served++ > 0) {
+                    // A connection after the first since power-on: accepted, and never answered.
+                    neverAnswers = neverAnswers ?: "DESCRIBE"
+                }
+
+                streams += this
             }
         }
 

@@ -168,7 +168,7 @@ class RtspClientTest {
 
         client.options()
         client.describe()
-        client.teardown()
+        client.play()
 
         assertEquals(
             "OPTIONS rtsp://192.168.100.1:8080/?action=stream RTSP/1.0\r\nCSeq: 1\r\nUser-Agent: Sightline\r\n\r\n",
@@ -180,7 +180,8 @@ class RtspClientTest {
             transport.sent[1],
         )
         assertEquals(
-            "TEARDOWN rtsp://192.168.100.1:8080/?action=stream RTSP/1.0\r\nCSeq: 3\r\nUser-Agent: Sightline\r\n\r\n",
+            "PLAY rtsp://192.168.100.1:8080/?action=stream RTSP/1.0\r\nCSeq: 3\r\nUser-Agent: Sightline\r\n" +
+                "Range: npt=0.000-\r\n\r\n",
             transport.sent[2],
         )
     }
@@ -191,7 +192,7 @@ class RtspClientTest {
         val client = RtspClient(transport, "192.168.100.1")
 
         client.setupVideo()
-        client.teardown()
+        client.play()
 
         assertEquals("ABCDEF", client.session)
         assertContains(transport.sent[1], "Session: ABCDEF\r\n")

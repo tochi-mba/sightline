@@ -42,7 +42,6 @@ class LibraryTest {
     @Test
     fun `the card is listed and each thumbnail fetched, with the camera put back after`() = runTest {
         val camera = cameraWithCard()
-        camera.control.isStreaming = false
 
         val files = camera.listed()
 
@@ -55,24 +54,23 @@ class LibraryTest {
     }
 
     @Test
-    fun `reading the card pauses the live view and starts it again after`() = runTest {
+    fun `reading the card ends the live picture until the camera restarts`() = runTest {
         val camera = cameraWithCard()
         camera.controller.holdLive("screen")
-        camera.until { it.live is LiveView.Playing }
+        camera.controller.showLivePicture()
+        assertTrue(camera.until { it.live is LiveView.Playing }.holdsLivePicture)
 
         camera.listed()
 
         assertTrue(camera.seen.any { it.live == LiveView.Paused })
-        assertEquals("TEARDOWN", camera.streams.first().verbs.last())
-        assertTrue(camera.until { it.live is LiveView.Playing }.live is LiveView.Playing)
-        assertEquals(2, camera.streams.size)
+        assertFalse(camera.until { it.live is LiveView.Unavailable }.holdsLivePicture)
+        assertEquals(1, camera.streams.size)
     }
 
     @Test
     fun `files whose thumbnails the camera will not give are listed anyway`() = runTest {
-        // The fake refuses thumbnails while the camera's media flow is running, as the firmware source does.
         val camera = cameraWithCard()
-        camera.control.isStreaming = true
+        camera.control.forcedRefusals[GpSockCommand.PlaybackGetThumbnail] = NakCode.GetThumbnailFail
 
         val files = camera.listed()
 
@@ -83,7 +81,6 @@ class LibraryTest {
     @Test
     fun `thumbnails already fetched are kept and those of files gone are dropped`() = runTest {
         val camera = cameraWithCard()
-        camera.control.isStreaming = false
         val first = camera.listed()
 
         camera.controller.delete(listOf(first[0]))!!.join()

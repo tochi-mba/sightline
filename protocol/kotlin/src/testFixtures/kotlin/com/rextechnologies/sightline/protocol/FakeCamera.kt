@@ -79,6 +79,9 @@ class FakeCamera : CameraTransport {
     /** Whether the media flow has been started. */
     var isStreaming = false
 
+    /** Told when the camera is put into browse mode, which ends its stream. */
+    var enteredBrowse: () -> Unit = {}
+
     /** Whether it has been told to turn off. */
     var isPoweredOff = false
         private set
@@ -281,6 +284,12 @@ class FakeCamera : CameraTransport {
 
             GpSockCommand.SetMode -> {
                 mode = CameraMode.entries.first { it.code == payload[0].toInt() }
+                if (mode == CameraMode.Browse) {
+                    // The real camera stops its stream to browse, and hangs up the connection it was on.
+                    isStreaming = false
+                    enteredBrowse()
+                }
+
                 ack(command)
             }
 
