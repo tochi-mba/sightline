@@ -25,13 +25,17 @@ public sealed class SentryRunnerTests
     private int movingFrame;
 
     /// <summary>A connected camera streaming steadily, each picture moving the clock on a quarter of a second before Sentry sees it.</summary>
+    /// <remarks>
+    /// Thirty seconds of pictures, longer than any test: the camera's one stream is shared by every watch on
+    /// a connection, so a test that arms twice is still watching the same stream the second time.
+    /// </remarks>
     private async Task<ControllerHarness> ConnectedAsync()
     {
         var camera = new ControllerHarness
         {
             Stream = s =>
             {
-                s.Frames.AddRange(Enumerable.Range(0, 200).Select(_ => FakeRtspCamera.Jpeg(600)));
+                s.Frames.AddRange(Enumerable.Range(0, 6000).Select(_ => FakeRtspCamera.Jpeg(600)));
                 s.Pace = TimeSpan.FromMilliseconds(5);
             },
         };
