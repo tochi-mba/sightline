@@ -11,7 +11,10 @@ import org.gradle.kotlin.dsl.getByType
 /**
  * `sightline.android-application`: the installable app, versioned from VERSION.
  *
- * `sightline.versionCode` may be passed by a release build; a local build is version code 1.
+ * A release build may pass `sightline.versionCode`, and `sightline.versionName` for a rolling build's longer
+ * name; a local build is version code 1 named VERSION. A release is signed when all four of
+ * `SIGHTLINE_KEYSTORE_PATH`, `SIGHTLINE_KEYSTORE_PASSWORD`, `SIGHTLINE_KEY_ALIAS` and `SIGHTLINE_KEY_PASSWORD`
+ * are set; otherwise it is built unsigned, and the release workflow refuses to publish it.
  */
 class AndroidApplicationConventionPlugin : Plugin<Project> {
     override fun apply(target: Project) {
@@ -22,9 +25,27 @@ class AndroidApplicationConventionPlugin : Plugin<Project> {
             val android = extensions.getByType<ApplicationExtension>()
             configureAndroid(android)
             android.defaultConfig.targetSdk = libs.version("target-sdk").toInt()
-            android.defaultConfig.versionName = sightlineVersion
+            android.defaultConfig.versionName =
+                providers.gradleProperty("sightline.versionName").getOrElse(sightlineVersion)
             android.defaultConfig.versionCode =
                 providers.gradleProperty("sightline.versionCode").map(String::toInt).getOrElse(1)
+
+            val signing = listOf(
+                "SIGHTLINE_KEYSTORE_PATH",
+                "SIGHTLINE_KEYSTORE_PASSWORD",
+                "SIGHTLINE_KEY_ALIAS",
+                "SIGHTLINE_KEY_PASSWORD",
+            ).map { providers.environmentVariable(it).orNull }
+            if (signing.all { !it.isNullOrEmpty() }) {
+                val (keystore, storePassword, alias, keyPassword) = signing.map { it!! }
+                android.signingConfigs.create("release") {
+                    storeFile = file(keystore)
+                    this.storePassword = storePassword
+                    keyAlias = alias
+                    this.keyPassword = keyPassword
+                }
+                android.buildTypes.getByName("release").signingConfig = android.signingConfigs.getByName("release")
+            }
 
             android.buildTypes {
                 getByName("debug") {

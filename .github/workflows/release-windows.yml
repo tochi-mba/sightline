@@ -1,0 +1,144 @@
+# The Windows downloads: the installer, the portable exe, the command line, and the feed an installed copy
+# updates itself from.
+#
+# Two cadences, one job. Every merge to main replaces the rolling `latest-windows` prerelease, so the
+# download link never changes and always means the newest build; a `v*` tag cuts a release that will still
+# be exactly these bytes years from now.
+#
+# Deliberately not filtered by path: a tag is matched against the diff of the commit it names, so a `v*` tag
+# on a commit that touched nothing under a filtered path would be skipped silently.
+name: Release for Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-windows
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Install the .NET SDK
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      # VERSION is the one version; a tag that disagrees fails here. A rolling build is ordered by the run
+      # number, which only counts up, so every newer build reaches installed copies.
+      - name: Resolve the version
+        id: version
+        shell: pwsh
+        run: |
+          $commits = git rev-list --count HEAD
+          python tools/scripts/release_version.py --ref $env:GITHUB_REF --sha $env:GITHUB_SHA --run $env:GITHUB_RUN_NUMBER --commits $commits |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          if ($LASTEXITCODE -ne 0) { throw 'The version could not be resolved.' }
+          Get-Content $env:GITHUB_OUTPUT
+
+      # A release never ships code that does not pass its own checks.
+      - name: Build and test
+        run: dotnet test Sightline.slnx --configuration Release
+
+      - name: Package
+        shell: pwsh
+        run: ./tools/scripts/package.ps1 -Version ${{ steps.version.outputs.version }}
+
+      # Never publish on faith: the files that will be downloaded exist, and their hashes are the ones
+      # the release description gives.
+      - name: Verify the downloads
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $dist = Join-Path $PWD 'dist/windows'
+          foreach ($file in 'Sightline-Setup.exe', "Sightline-Setup-$version.exe", 'Sightline-Portable.exe', "Sightline-Portable-$version.exe",
+                            'sightline-cli.exe', "sightline-cli-$version.exe", 'releases.win.json', 'windows-release.json', 'SHA256SUMS.txt') {
+            if (-not (Test-Path -LiteralPath (Join-Path $dist $file))) { throw "The release is missing $file." }
+          }
+          $release = Get-Content -LiteralPath (Join-Path $dist 'windows-release.json') -Raw | ConvertFrom-Json
+          if ($release.version -ne $version) { throw "windows-release.json says $($release.version), not $version." }
+          foreach ($download in $release.downloads) {
+            $actual = (Get-FileHash -LiteralPath (Join-Path $dist $download.name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -ne $download.sha256) { throw "$($download.name) does not match its published hash." }
+          }
+          if (-not (Get-ChildItem -LiteralPath $dist -Filter '*.nupkg')) { throw 'The update feed has no package.' }
+          Write-Host "Verified the downloads for $version."
+
+      # A rolling release is mutable by design: the previous build's files come off first, so it never
+      # offers two versions side by side.
+      - name: Clear the previous rolling build
+        if: steps.version.outputs.tagged == 'false' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view latest-windows --json tagName | Out-Null
+          if ($LASTEXITCODE -ne 0) { Write-Host 'No rolling release yet.'; exit 0 }
+          foreach ($asset in gh release view latest-windows --json assets --jq '.assets[].name') {
+            if ([string]::IsNullOrWhiteSpace($asset)) { continue }
+            gh release delete-asset latest-windows $asset --yes
+            if ($LASTEXITCODE -ne 0) { throw "Could not delete $asset from the rolling release." }
+          }
+
+      - name: Publish the rolling prerelease
+        # Guarded on the branch too: a dispatch from another branch builds and verifies, then stops.
+        if: steps.version.outputs.tagged == 'false' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: latest-windows
+          target_commitish: ${{ github.sha }}
+          name: Sightline for Windows (rolling)
+          prerelease: true
+          make_latest: false
+          files: dist/windows/*
+          body: |
+            **The newest build of Sightline for Windows, replaced on every merge.** Version
+            `${{ steps.version.outputs.version }}`. For a build that will not change under you, use a `v*` release.
+
+            **Windows 10 or 11, 64-bit.** Download `Sightline-Setup.exe` and run it. It installs for your account
+            only, needs no administrator, puts Sightline in the Start menu and `sightline` on your PATH, and
+            updates itself from this release; Settings has the switch if you would rather it did not.
+
+            Would rather install nothing? `Sightline-Portable.exe` runs from anywhere, and `sightline-cli.exe`
+            is the command line on its own. Neither updates itself.
+
+            The builds are not code-signed, so Windows will say "Windows protected your PC": choose
+            **More info**, then **Run anyway**. That warning is accurate: Windows does not know this publisher.
+            `SHA256SUMS.txt` has every file's hash.
+
+      # After the release, not before: a tag moved first would leave a failed publish pointing at bytes
+      # nobody published.
+      - name: Move the rolling tag
+        if: steps.version.outputs.tagged == 'false' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          git tag -f latest-windows $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Could not move the rolling tag.' }
+          git push -f origin refs/tags/latest-windows
+          if ($LASTEXITCODE -ne 0) { throw 'Could not push the rolling tag.' }
+
+      - name: Publish the tagged release
+        if: steps.version.outputs.tagged == 'true'
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          files: dist/windows/*
+          generate_release_notes: true
+          body: |
+            **Windows 10 or 11, 64-bit.** Download `Sightline-Setup.exe` and run it: a per-person install, no
+            administrator, Sightline in the Start menu and `sightline` on your PATH, updating itself from
+            tagged releases. `Sightline-Portable.exe` and `sightline-cli.exe` install nothing.
+
+            The builds are not code-signed, so Windows will show an unknown-publisher warning: choose
+            **More info**, then **Run anyway**. `SHA256SUMS.txt` has every file's hash.
