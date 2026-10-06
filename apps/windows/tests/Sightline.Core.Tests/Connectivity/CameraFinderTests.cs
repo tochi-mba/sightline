@@ -39,6 +39,21 @@ public sealed class CameraFinderTests
     }
 
     [Fact]
+    public async Task An_adapter_on_a_network_is_never_asked_to_scan_but_what_it_saw_is_still_offered()
+    {
+        // The built-in adapter is how this PC is online: a scan would take it off its channel for a moment.
+        wlan.AdapterList.Add(Adapters.BuiltIn(new WifiConnection("Home", "Home")));
+        wlan.AdapterList.Add(Adapters.Dongle());
+        wlan.Visible[Adapters.BuiltInId] = [new WifiNetwork(Camera, 80)];
+        wlan.Visible[Adapters.DongleId] = [new WifiNetwork(Camera, 60)];
+
+        var found = await Finder().FindAsync(null, CancellationToken.None);
+
+        wlan.Calls.ShouldBe([$"scan {Adapters.DongleId}"]);
+        found.Select(o => o.AdapterId).ShouldBe([Adapters.DongleId, Adapters.BuiltInId]);
+    }
+
+    [Fact]
     public async Task The_choice_that_changes_least_comes_first_whatever_the_signal()
     {
         // The built-in adapter hears the camera better, but taking it would take this PC off its Wi-Fi.

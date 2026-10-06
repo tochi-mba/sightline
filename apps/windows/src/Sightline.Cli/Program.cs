@@ -230,7 +230,9 @@ internal static class Program
         }
 
         var adapters = wlan.Adapters();
-        var ssid = options.Value("--ssid") ?? await FindCameraAsync(wlan, adapters, cancellationToken);
+        // The shared finder: it asks only adapters on no network to scan, so looking never disturbs a connection.
+        var ssid = options.Value("--ssid")
+            ?? (await new CameraFinder(wlan, network).FindAsync(null, cancellationToken)).FirstOrDefault()?.Ssid;
         if (ssid is null)
         {
             Error($"No camera network in range. Press the camera's Wi-Fi button, or name it with --ssid (it starts '{DefaultSsidPrefix}').");
@@ -274,18 +276,6 @@ internal static class Program
             Error(exception.Message);
             return ExitCode.NoCamera;
         }
-    }
-
-    private static async Task<string?> FindCameraAsync(
-        WindowsWlanClient wlan, IReadOnlyList<Sightline.Core.Connectivity.WifiAdapter> adapters, CancellationToken cancellationToken)
-    {
-        await Task.WhenAll(adapters.Select(a => wlan.ScanAsync(a.Id, cancellationToken)));
-        return adapters
-            .SelectMany(a => wlan.Networks(a.Id))
-            .Where(n => n.Ssid.StartsWith(DefaultSsidPrefix, StringComparison.Ordinal))
-            .OrderByDescending(n => n.SignalPercent)
-            .Select(n => n.Ssid)
-            .FirstOrDefault();
     }
 
     private static async Task<int> Disconnect()

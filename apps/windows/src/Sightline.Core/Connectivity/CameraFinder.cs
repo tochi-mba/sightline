@@ -50,16 +50,22 @@ public sealed class CameraFinder
     }
 
     /// <summary>
-    /// Scans with every adapter and returns each camera once per adapter that can see it, best first: in
-    /// <see cref="AdapterAdvisor.Rank"/>'s order, the stronger signal first between otherwise equal choices.
+    /// Returns each camera once per adapter that can see it, best first: in <see cref="AdapterAdvisor.Rank"/>'s
+    /// order, the stronger signal first between otherwise equal choices.
     /// </summary>
+    /// <remarks>
+    /// Only adapters on no network are asked to scan. A scan takes an adapter off its channel for a moment,
+    /// and an adapter on a network may be how this PC is online, so for those the networks Windows has
+    /// already seen on its own are used instead. Looking for a camera never disturbs a connection.
+    /// </remarks>
     /// <param name="remembered">The adapter that last reached a camera, whose DHCP server remembers it.</param>
     /// <param name="cancellationToken">Gives up scanning.</param>
     public async Task<IReadOnlyList<CameraOption>> FindAsync(Guid? remembered, CancellationToken cancellationToken)
     {
         // Scanning reads what is on the air; it never changes the network an adapter is on.
         var adapters = wlan.Adapters();
-        await Task.WhenAll(adapters.Select(adapter => wlan.ScanAsync(adapter.Id, cancellationToken))).ConfigureAwait(false);
+        await Task.WhenAll(adapters.Where(adapter => adapter.IsIdle).Select(adapter => wlan.ScanAsync(adapter.Id, cancellationToken)))
+            .ConfigureAwait(false);
 
         var seen = adapters.ToDictionary(adapter => adapter.Id, adapter => wlan.Networks(adapter.Id));
         var cameras = seen.Values
