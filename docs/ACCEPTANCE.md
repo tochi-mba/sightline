@@ -15,7 +15,8 @@ phone and a WireGuard VPN.
 | N2 | PC internet answers an HTTP request while connected to the camera | 2026-10-02 | Pass |
 | N3 | PC internet answers after leaving the camera | 2026-10-02 | Pass |
 | N4 | The camera advertises itself as a default gateway | 2026-10-02 | Observed (yes) |
-| N5 | Phone joins the camera while mobile data carries the internet | | Not run: the reference phone is the PC's internet, and joining it to the camera took the PC offline |
+| N5 | Phone joins the camera through Sightline while mobile data carries the internet | | Not run yet: needs N6's saved network kept from joining by itself first |
+| N6 | Phone's Wi-Fi turned on while the camera is saved on it as an ordinary network | 2026-10-06 | **The PC lost the internet for about 20 seconds.** Android joined the saved camera network by itself, before Sightline asked for anything, and USB tethering moved its upstream from mobile data to Wi-Fi. It came back as soon as the phone's Wi-Fi was turned off. Turn off Auto reconnect for a saved camera network on a phone that tethers |
 
 ## Control (GPSOCKET, TCP 8081)
 
@@ -75,3 +76,16 @@ phone and a WireGuard VPN.
 | W3 | Connects and shows the camera's real settings and firmware | 2026-10-02 | Pass |
 | W4 | Shows the live picture in its window | | Not yet seen on screen; its camera code passes, see P5 |
 | W5 | A failed picture says why instead of staying black | 2026-10-02 | Pass |
+
+## Distribution
+
+| # | Check | Date | Result |
+| --- | --- | --- | --- |
+| D1 | A merge to `main` publishes the rolling Windows release | 2026-10-06 | Pass: installer, portable exe, command line, update package, release JSON and checksums, each also under a versioned name |
+| D2 | A merge to `main` publishes the rolling Android release, signed with the release key | 2026-10-06 | Pass: 2.1 MB APK, certificate `CN=Sightline, O=REX Technologies`, SHA-256 `3e2dae5e…688e0748` |
+| D3 | The installer installs for one person with no administrator prompt | 2026-10-06 | Pass: silent install in 7 seconds; Start menu and desktop shortcuts; an Installed apps entry |
+| D4 | `sightline` works in a fresh terminal after installing | 2026-10-06 | Pass: found on the PATH, `--version` reports the rolling build |
+| D5 | Uninstalling removes everything it added and nothing else | 2026-10-06 | Pass for the folder, shortcuts and Installed apps entry. The PATH came back one character short, a trailing separator the install had trimmed; fixed the same day and held to the exact text by a test |
+| D6 | The release APK installs on the reference phone | 2026-10-06 | Pass: Samsung Galaxy S21 Ultra, Android 15, over USB |
+| D7 | The site is published and says what the live picture costs | 2026-10-06 | Pass: https://tochi-mba.github.io/sightline/ answers, with the day's wording |
+| D8 | Uninstalling keeps the person's settings, or asks | | Found on 2026-10-06 that it did not: the install folder was also the settings folder. Settings now live in `%LOCALAPPDATA%\REX Technologies\Sightline`, held there by a test; not yet confirmed by installing and uninstalling a build with the change |
