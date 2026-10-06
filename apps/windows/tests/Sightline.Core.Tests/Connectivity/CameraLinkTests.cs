@@ -181,8 +181,10 @@ public sealed class CameraLinkTests
     {
         network.Addresses[DongleId] = [Leased];
         network.AddressArrivesAfter = 3;
+        // Not a test of the deadline: room for a busy machine's timer to take its time over three polls.
+        var patient = new CameraLink(wlan, network, new CameraLinkTiming(TimeSpan.FromSeconds(10), TimeSpan.FromMilliseconds(5)));
 
-        var local = await Link().JoinAsync(Choose(Dongle()), Camera, "12345678", false, CameraAddress, CancellationToken.None);
+        var local = await patient.JoinAsync(Choose(Dongle()), Camera, "12345678", false, CameraAddress, CancellationToken.None);
 
         local.ShouldBe(Leased);
     }

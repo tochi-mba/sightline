@@ -18,6 +18,9 @@ public sealed class CameraSessionTests : IAsyncDisposable
 {
     private static readonly CameraSessionTiming Quick = new(TimeSpan.FromMilliseconds(300), TimeSpan.FromMilliseconds(300));
 
+    /// <summary>For pictures paced like the real camera's: room for a busy machine between two of them.</summary>
+    private static readonly CameraSessionTiming Paced = new(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+
     private readonly FakeCamera control = new();
     private readonly FakeRtspCamera stream = new();
     private readonly List<string> trace = [];
@@ -25,9 +28,9 @@ public sealed class CameraSessionTests : IAsyncDisposable
 
     public CameraSessionTests() => stream.StreamStarted = () => control.IsStreaming;
 
-    private async Task<CameraSession> OpenAsync()
+    private async Task<CameraSession> OpenAsync(CameraSessionTiming? timing = null)
     {
-        var session = await CameraSession.OpenAsync(Transport, "192.168.100.1", Quick);
+        var session = await CameraSession.OpenAsync(Transport, "192.168.100.1", timing ?? Quick);
         session.Trace = trace.Add;
         return session;
     }
@@ -65,7 +68,7 @@ public sealed class CameraSessionTests : IAsyncDisposable
     {
         stream.Pace = TimeSpan.FromMilliseconds(30);
         stream.Frames.AddRange(Enumerable.Range(1, 20).Select(n => FakeRtspCamera.Jpeg(100 + n)));
-        await using var session = await OpenAsync();
+        await using var session = await OpenAsync(Paced);
         session.HoldsLivePicture.ShouldBeFalse();
 
         await session.GrabFrameAsync(TimeSpan.FromSeconds(5));
@@ -87,7 +90,7 @@ public sealed class CameraSessionTests : IAsyncDisposable
     {
         stream.Pace = TimeSpan.FromMilliseconds(30);
         stream.Frames.AddRange(Enumerable.Range(1, 30).Select(n => FakeRtspCamera.Jpeg(100 + n)));
-        await using var session = await OpenAsync();
+        await using var session = await OpenAsync(Paced);
 
         async Task<int> Watch()
         {
@@ -124,7 +127,7 @@ public sealed class CameraSessionTests : IAsyncDisposable
     {
         stream.Pace = TimeSpan.FromMilliseconds(30);
         stream.Frames.AddRange(Enumerable.Range(1, 10).Select(n => FakeRtspCamera.Jpeg(100 + n)));
-        await using var session = await OpenAsync();
+        await using var session = await OpenAsync(Paced);
         using var cancel = new CancellationTokenSource();
         var count = 0;
 
