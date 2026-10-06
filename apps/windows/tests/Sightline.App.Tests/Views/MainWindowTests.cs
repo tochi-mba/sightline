@@ -187,6 +187,65 @@ public sealed class MainWindowTests
     }
 
     [AvaloniaFact]
+    public async Task An_alarm_shows_on_the_sentry_page_as_a_card_with_its_time()
+    {
+        await using var app = App(Returning with { SentryArmDelaySeconds = 0, SentryRecords = false });
+        // A block jumping from side to side, picture after picture.
+        app.Link.Stream = s =>
+        {
+            s.Frames.AddRange(Enumerable.Range(0, 200).Select(i => TestPictures.Moving(left: i % 2 == 0)));
+            s.Pace = TimeSpan.FromMilliseconds(40);
+        };
+        using var shell = new ShellViewModel(app.Parts);
+        var window = Show(shell);
+        await app.ConnectedAsync();
+        Click(Find<Button>(window, "SentryTab"));
+
+        Click(Find<Button>(window, "Arm"));
+        await UntilAsync(() => Find<ItemsControl>(window, "Alarms").ItemCount > 0);
+
+        Find<ItemsControl>(window, "Alarms").GetVisualDescendants().OfType<TextBlock>()
+            .ShouldContain(text => text.Text != null && text.Text.StartsWith("Movement at ", StringComparison.Ordinal));
+        Click(Find<Button>(window, "Disarm"));
+        window.Close();
+    }
+
+    [AvaloniaFact]
+    public void A_window_with_no_app_behind_it_simply_closes()
+    {
+        var window = new MainWindow();
+        var closed = false;
+        window.Closed += (_, _) => closed = true;
+        window.Show();
+
+        window.Close();
+        Dispatcher.UIThread.RunJobs();
+
+        closed.ShouldBeTrue();
+    }
+
+    [AvaloniaFact]
+    public async Task Closed_by_something_other_than_the_person_it_closes_even_with_a_camera_connected()
+    {
+        // Only a person closing the window sends it to the tray; anything else closing it means it.
+        await using var app = App(Returning);
+        using var shell = new ShellViewModel(app.Parts);
+        var owner = new Window();
+        owner.Show();
+        var window = new MainWindow { DataContext = shell };
+        var closed = false;
+        window.Closed += (_, _) => closed = true;
+        window.Show(owner);
+        await app.ConnectedAsync();
+        await UntilAsync(() => shell.KeepsRunningWhenClosed);
+
+        owner.Close();
+        Dispatcher.UIThread.RunJobs();
+
+        closed.ShouldBeTrue();
+    }
+
+    [AvaloniaFact]
     public async Task Closed_with_a_camera_connected_it_goes_to_the_tray_and_comes_back()
     {
         await using var app = App(Returning);
