@@ -6,336 +6,285 @@ using Xunit;
 namespace Sightline.Protocol.Tests;
 
 /// <summary>
-/// Reassembly, against packets shaped exactly like the reference camera's.
+/// Reassembly, one datagram at a time, against packets shaped like the reference camera's.
 /// </summary>
 /// <remarks>
 /// The packets here are synthetic: the real capture is a picture of somebody's room and belongs in
-/// an ignored folder, not in a public repository. Their shape is taken from the real one — bare
-/// RTP with no interleaved framing, ssrc <c>0x22222222</c>, payload type 26, and a complete JFIF
-/// document inside the payload rather than the stripped form RFC 2435 describes.
+/// an ignored folder, not in a public repository. Their shape is taken from the real one — payload
+/// type 26, a fixed synchronisation source, the marker on each picture's last fragment, and a complete
+/// JFIF document inside the payload rather than the stripped form RFC 2435 describes.
 /// </remarks>
 public sealed class RtpJpegReassemblerTests
 {
     private const uint Ssrc = 0x22222222;
 
     [Fact]
-    public void One_packet_carrying_a_whole_picture_produces_that_picture()
+    public void One_packet_carrying_a_whole_picture_produces_that_picture_at_once()
     {
         var jpeg = FakeJpeg(600);
         var reassembler = new RtpJpegReassembler();
 
-        var frames = PushAll(reassembler, Packets(jpeg, 640, 360, fragmentSize: 10_000));
+        var frame = reassembler.Push(new Rtp(jpeg, Timestamp: 7380).Build());
 
-        frames.Count.ShouldBe(1);
-        frames[0].Jpeg.ShouldBe(jpeg);
-        frames[0].Width.ShouldBe(640);
-        frames[0].Height.ShouldBe(360);
+        frame.ShouldNotBeNull();
+        frame.Value.Jpeg.ShouldBe(jpeg);
+        frame.Value.Width.ShouldBe(640);
+        frame.Value.Height.ShouldBe(360);
+        frame.Value.RtpTimestamp.ShouldBe(7380u);
+        reassembler.PacketsRead.ShouldBe(1);
     }
 
     [Fact]
-    public void A_picture_split_across_packets_is_put_back_together_in_order()
+    public void A_picture_split_across_packets_comes_out_whole_when_its_marked_last_fragment_arrives()
     {
         var jpeg = FakeJpeg(3000);
         var reassembler = new RtpJpegReassembler();
+        var packets = Fragments(jpeg, 700);
 
-        var frames = PushAll(reassembler, Packets(jpeg, 640, 360, fragmentSize: 700));
-
-        frames.Count.ShouldBe(1);
-        frames[0].Jpeg.ShouldBe(jpeg);
-    }
-
-    [Fact]
-    public void The_reference_geometry_comes_through_as_640_by_360()
-    {
-        // The camera reports size in units of eight pixels: 0x50 and 0x2d.
-        var frames = PushAll(new RtpJpegReassembler(), Packets(FakeJpeg(400), 640, 360, 10_000));
-
-        frames[0].Width.ShouldBe(640);
-        frames[0].Height.ShouldBe(360);
-    }
-
-    [Fact]
-    public void Bytes_arriving_in_awkward_pieces_still_produce_whole_pictures()
-    {
-        // TCP gives no frame boundaries, and this stream has no length fields at all, so the
-        // reader has to cope with a packet split anywhere - including inside its header.
-        var jpeg = FakeJpeg(2000);
-        // A packet carries no length, so its end is only known once the next one starts. The
-        // sentinel is the next packet a live camera would always be sending anyway.
-        var wire = Packets(jpeg, 640, 360, fragmentSize: 500)
-            .Concat(Packets(FakeJpeg(50), 640, 360, 10_000, timestamp: 99_999))
-            .SelectMany(p => p)
-            .ToArray();
-        var reassembler = new RtpJpegReassembler();
-        var frames = new List<CameraFrame>();
-
-        for (var offset = 0; offset < wire.Length; offset += 7)
+        foreach (var packet in packets[..^1])
         {
-            frames.AddRange(reassembler.Push(wire.AsSpan(offset, Math.Min(7, wire.Length - offset))));
+            reassembler.Push(packet).ShouldBeNull();
         }
 
-        // The final picture is only emitted once the next one starts, which is how the stream works.
-        frames.Count.ShouldBe(1);
-        frames[0].Jpeg.ShouldBe(jpeg);
+        reassembler.Push(packets[^1])!.Value.Jpeg.ShouldBe(jpeg);
+        reassembler.PicturesDropped.ShouldBe(0);
     }
 
     [Fact]
-    public void Two_pictures_in_a_row_are_separated_by_the_fragment_offset_restarting()
+    public void Pictures_one_after_another_each_come_out()
     {
-        var first = FakeJpeg(500);
-        var second = FakeJpeg(700);
-        var wire = Packets(first, 640, 360, 10_000, timestamp: 1000)
-            .Concat(Packets(second, 640, 360, 10_000, timestamp: 8380))
-            .Concat(Packets(FakeJpeg(100), 640, 360, 10_000, timestamp: 15_760))
-            .SelectMany(p => p)
-            .ToArray();
+        var first = FakeJpeg(900, 0x11);
+        var second = FakeJpeg(1300, 0x22);
+        var reassembler = new RtpJpegReassembler();
 
-        var frames = new RtpJpegReassembler().Push(wire);
+        var frames = PushAll(reassembler, [.. Fragments(first, 500, timestamp: 1000), .. Fragments(second, 500, timestamp: 8380, sequence: 2)]);
 
         frames.Count.ShouldBe(2);
         frames[0].Jpeg.ShouldBe(first);
         frames[1].Jpeg.ShouldBe(second);
-        frames[0].RtpTimestamp.ShouldBe(1000u);
-        frames[1].RtpTimestamp.ShouldBe(8380u);
+        reassembler.PacketsLost.ShouldBe(0);
     }
 
     [Fact]
-    public void A_dollar_byte_inside_the_picture_does_not_derail_it()
+    public void A_picture_that_lost_a_fragment_is_dropped_and_the_next_one_still_comes()
     {
-        // This is the exact trap: 0x24 is '$', which is what RTSP interleaved framing starts with.
-        // A reader looking for that framing finds these and produces nonsense.
-        var jpeg = FakeJpeg(900, fill: 0x24);
+        // UDP drops a packet now and then; a picture with a hole in it decodes as a smear.
+        var damaged = Fragments(FakeJpeg(2000, 0x11), 500, timestamp: 1000);
+        var next = FakeJpeg(800, 0x22);
         var reassembler = new RtpJpegReassembler();
 
-        var frames = PushAll(reassembler, Packets(jpeg, 640, 360, fragmentSize: 10_000));
+        var frames = PushAll(reassembler, [damaged[0], damaged[2], damaged[3], .. Fragments(next, 500, timestamp: 8380, sequence: 4)]);
 
-        frames.Count.ShouldBe(1);
-        frames[0].Jpeg.ShouldBe(jpeg);
-    }
-
-    [Fact]
-    public void A_truncated_final_fragment_is_still_closed_so_the_file_opens()
-    {
-        var reassembler = new RtpJpegReassembler();
-        var withoutEnd = new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3 };
-
-        var frames = PushAll(reassembler, Packets(withoutEnd, 640, 360, 10_000));
-
-        RtpJpegReassembler.LooksLikeJpeg(frames[0].Jpeg).ShouldBeTrue();
-    }
-
-    [Fact]
-    public void Lost_packets_are_counted_rather_than_passed_off_as_a_clean_stream()
-    {
-        var packets = Packets(FakeJpeg(3000), 640, 360, fragmentSize: 500).ToList();
-        var reassembler = new RtpJpegReassembler();
-
-        // Drop one from the middle, as a lossy link would.
-        packets.RemoveAt(2);
-        foreach (var packet in packets)
-        {
-            reassembler.Push(packet);
-        }
-
+        frames.ShouldHaveSingleItem().Jpeg.ShouldBe(next);
+        reassembler.PicturesDropped.ShouldBe(1);
         reassembler.PacketsLost.ShouldBe(1);
     }
 
     [Fact]
-    public void A_header_from_another_source_never_starts_a_packet_so_it_never_sets_the_geometry()
+    public void A_picture_whose_last_fragment_never_came_is_dropped_when_the_next_one_starts()
     {
-        // With no length on the wire another sender's packet cannot be cut out of the stream; what
-        // the source lock guarantees is that its header is never taken for one of the camera's, so
-        // it can never start a picture or change the size a frame reports.
-        var mine = Packets(FakeJpeg(400), 640, 360, 10_000).Single();
-        var theirs = Packets(FakeJpeg(400), 320, 240, 10_000, ssrc: 0x99999999).Single();
+        var cut = Fragments(FakeJpeg(1500, 0x11), 500, timestamp: 1000);
+        var next = FakeJpeg(400, 0x22);
         var reassembler = new RtpJpegReassembler();
 
-        reassembler.Push(mine);
-        var frames = reassembler.Push(theirs.Concat(mine).ToArray());
+        var frames = PushAll(reassembler, [cut[0], cut[1], .. Fragments(next, 500, timestamp: 8380, sequence: 3)]);
 
-        frames.ShouldAllBe(f => f.Width == 640 && f.Height == 360);
+        frames.ShouldHaveSingleItem().Jpeg.ShouldBe(next);
+        reassembler.PicturesDropped.ShouldBe(1);
     }
 
     [Fact]
-    public void Bytes_before_the_first_packet_are_dropped_once_a_packet_is_found()
+    public void Fragments_of_a_picture_joined_part_way_through_are_let_go_without_counting_a_drop()
     {
-        // A connection joined part-way through a packet starts with its tail. Those bytes are left
-        // behind as soon as a real header is found, and the pictures after it are whole.
-        var jpeg = FakeJpeg(500);
+        var joinedLate = Fragments(FakeJpeg(1500, 0x11), 500, timestamp: 1000);
+        var next = FakeJpeg(400, 0x22);
         var reassembler = new RtpJpegReassembler();
 
-        reassembler.Push([1, 2, 3, 4, 5, .. Raw(jpeg, 0, marker: true, timestamp: 1)]).ShouldBeEmpty();
-        var frames = reassembler.Push(Raw(FakeJpeg(40), 0, marker: true, timestamp: 2));
+        var frames = PushAll(reassembler, [joinedLate[1], joinedLate[2], .. Fragments(next, 500, timestamp: 8380, sequence: 3)]);
 
-        frames.Single().Jpeg.ShouldBe(jpeg);
+        frames.ShouldHaveSingleItem().Jpeg.ShouldBe(next);
+        reassembler.PicturesDropped.ShouldBe(0);
     }
 
     [Fact]
-    public void A_block_that_is_not_a_jpeg_is_not_called_one()
+    public void A_fragment_stamped_for_another_picture_drops_the_one_being_put_together()
     {
-        RtpJpegReassembler.LooksLikeJpeg([1, 2, 3, 4]).ShouldBeFalse();
-        RtpJpegReassembler.LooksLikeJpeg([]).ShouldBeFalse();
+        var reassembler = new RtpJpegReassembler();
+        reassembler.Push(new Rtp(new byte[500], Marker: false, Timestamp: 1000).Build());
+
+        var stray = reassembler.Push(new Rtp(new byte[100], Offset: 500, Timestamp: 2000, Sequence: 1).Build());
+
+        stray.ShouldBeNull();
+        reassembler.PicturesDropped.ShouldBe(1);
     }
 
     [Fact]
-    public void A_camera_that_never_sets_the_marker_bit_still_produces_pictures()
+    public void Lost_packets_are_counted_by_the_size_of_the_gap()
     {
-        // Each picture then ends only when the next one starts, at fragment offset zero.
-        var first = FakeJpeg(800);
-        var second = FakeJpeg(900);
-        var wire = Raw(first, 0, marker: false, timestamp: 1)
-            .Concat(Raw(second, 0, marker: false, timestamp: 2))
-            .Concat(Raw(FakeJpeg(40), 0, marker: false, timestamp: 3))
-            .Concat(Raw(FakeJpeg(40), 0, marker: false, timestamp: 4))
-            .ToArray();
+        var reassembler = new RtpJpegReassembler();
 
-        var frames = new RtpJpegReassembler().Push(wire);
+        reassembler.Push(new Rtp(FakeJpeg(100), Sequence: 10).Build());
+        reassembler.Push(new Rtp(FakeJpeg(100), Sequence: 14).Build());
 
-        // The third picture is still open: only a fifth packet's start would show the fourth ended.
-        frames.Select(f => f.Jpeg).ShouldBe([first, second]);
+        reassembler.PacketsLost.ShouldBe(3);
     }
 
     [Fact]
-    public void Fragments_from_a_picture_joined_half_way_through_are_dropped()
+    public void A_sequence_number_wrapping_past_its_top_is_not_a_loss()
     {
-        // Connecting mid-picture gives its tail first. Those fragments can never make a whole file.
-        var tail = Raw(FakeJpeg(300), fragmentOffset: 4000, marker: true, timestamp: 1);
-        var whole = FakeJpeg(500);
-        var wire = tail
-            .Concat(Raw(whole, 0, marker: true, timestamp: 2))
-            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 3))
-            .ToArray();
+        var reassembler = new RtpJpegReassembler();
 
-        var frames = new RtpJpegReassembler().Push(wire);
+        reassembler.Push(new Rtp(FakeJpeg(100), Sequence: 65535).Build());
+        reassembler.Push(new Rtp(FakeJpeg(100), Sequence: 0).Build());
 
-        frames.Count.ShouldBe(1);
-        frames[0].Jpeg.ShouldBe(whole);
+        reassembler.PacketsLost.ShouldBe(0);
     }
 
     [Fact]
-    public void Inline_quantisation_tables_are_skipped_rather_than_taken_for_picture()
+    public void A_packet_arriving_late_or_twice_is_not_taken_for_thousands_lost()
     {
-        // RFC 2435 puts tables in front of the first fragment when Q is 128 or more. This camera
-        // never does, but a reassembler that took them for picture data would corrupt every frame.
-        var jpeg = FakeJpeg(600);
-        var tables = new byte[] { 0, 0, 0, 6, 9, 9, 9, 9, 9, 9 };
-        var wire = Raw([.. tables, .. jpeg], 0, marker: true, timestamp: 1, quantisation: 200)
-            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 2))
-            .ToArray();
+        var reassembler = new RtpJpegReassembler();
 
-        var frames = new RtpJpegReassembler().Push(wire);
+        reassembler.Push(new Rtp(FakeJpeg(100), Sequence: 20).Build());
+        reassembler.Push(new Rtp(FakeJpeg(100), Sequence: 19).Build());
+        reassembler.Push(new Rtp(FakeJpeg(100), Sequence: 19).Build());
 
-        frames[0].Jpeg.ShouldBe(jpeg);
+        reassembler.PacketsLost.ShouldBe(0);
     }
 
     [Fact]
-    public void A_table_header_claiming_more_than_the_packet_holds_is_dropped()
+    public void A_new_sender_starts_afresh_without_its_numbering_counting_as_loss()
     {
-        var lying = new byte[] { 0, 0, 0xFF, 0xFF, 1, 2, 3 };
-        var good = FakeJpeg(200);
-        var wire = Raw(lying, 0, marker: true, timestamp: 1, quantisation: 255)
-            .Concat(Raw(good, 0, marker: true, timestamp: 2))
-            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 3))
-            .ToArray();
+        // The camera starting a new stream: nothing in hand belongs with it, and nothing was lost.
+        var reassembler = new RtpJpegReassembler();
+        reassembler.Push(new Rtp(new byte[500], Marker: false, Sequence: 900).Build());
 
-        var frames = new RtpJpegReassembler().Push(wire);
+        var jpeg = FakeJpeg(300);
+        var frame = reassembler.Push(new Rtp(jpeg, Sequence: 4, Ssrc: 0x33333333).Build());
 
-        frames.Select(f => f.Jpeg).ShouldBe([good]);
+        frame!.Value.Jpeg.ShouldBe(jpeg);
+        reassembler.PacketsLost.ShouldBe(0);
+        reassembler.PicturesDropped.ShouldBe(0);
+    }
+
+    [Theory]
+    [InlineData(new byte[] { 0x80, 0x9A, 0, 1, 0, 0, 0, 1, 0x22, 0x22, 0x22 })]
+    public void A_datagram_too_short_for_an_rtp_header_is_ignored(byte[] datagram)
+    {
+        var reassembler = new RtpJpegReassembler();
+
+        reassembler.Push(datagram).ShouldBeNull();
+        reassembler.PacketsRead.ShouldBe(0);
     }
 
     [Fact]
-    public void Picture_data_that_looks_like_another_senders_header_does_not_cut_the_first_packet_short()
+    public void A_packet_of_another_rtp_version_is_ignored()
     {
-        // Found by the benchmark suite: before the stream's source was known, the end of the very
-        // first packet was looked for by accepting a header from any sender, so twelve bytes of
-        // picture data shaped like one cut the first packet there and the rest was thrown away as
-        // noise. The first picture of every live view could arrive missing its start.
-        var lookalike = new byte[12];
-        lookalike[0] = 0x80;
-        lookalike[1] = 0x80 | RtpJpegReassembler.JpegPayloadType;
-        BinaryPrimitives.WriteUInt32BigEndian(lookalike.AsSpan(8), 0x11111111);
-        var jpeg = FakeJpeg(1000);
-        lookalike.CopyTo(jpeg, 300);
-        var wire = Raw(jpeg, 0, marker: true, timestamp: 1)
-            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 2))
-            .ToArray();
+        var reassembler = new RtpJpegReassembler();
 
-        var frames = new RtpJpegReassembler().Push(wire);
-
-        frames.Count.ShouldBe(1);
-        frames[0].Jpeg.ShouldBe(jpeg);
+        reassembler.Push(new Rtp(FakeJpeg(100), Version: 1).Build()).ShouldBeNull();
+        reassembler.PacketsRead.ShouldBe(0);
     }
 
     [Fact]
-    public void A_header_listing_contributing_sources_is_not_taken_for_a_packet()
+    public void A_packet_that_is_not_jpeg_such_as_the_cameras_sound_is_ignored()
     {
-        // This camera never sends them, so a first byte other than 0x80 inside the picture data is
-        // just data — treating it as a header would cut a picture in two.
+        var reassembler = new RtpJpegReassembler();
+
+        reassembler.Push(new Rtp(FakeJpeg(100), PayloadType: 97).Build()).ShouldBeNull();
+        reassembler.PacketsRead.ShouldBe(0);
+    }
+
+    [Fact]
+    public void Contributing_sources_are_stepped_over()
+    {
         var jpeg = FakeJpeg(400);
-        var lookalike = Raw(FakeJpeg(100), 0, marker: true, timestamp: 9);
-        lookalike[0] = 0x82;
-        var wire = Raw([.. jpeg[..200], .. lookalike, .. jpeg[200..]], 0, marker: true, timestamp: 1)
-            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 2))
-            .ToArray();
 
-        var frames = new RtpJpegReassembler().Push(wire);
-
-        frames[0].Jpeg.Length.ShouldBe(400 + lookalike.Length);
+        new RtpJpegReassembler().Push(new Rtp(jpeg, Csrcs: 2).Build())!.Value.Jpeg.ShouldBe(jpeg);
     }
 
     [Fact]
-    public void A_packet_too_short_for_its_headers_is_ignored()
+    public void A_header_extension_is_stepped_over()
     {
-        // Twelve bytes that look like an RTP header and then the next packet straight away: there is
-        // no room for a JPEG header.
-        var bare = Raw([], 0, marker: true, timestamp: 1).AsSpan(0, 12).ToArray();
-        var jpeg = FakeJpeg(300);
-        var wire = bare
-            .Concat(Raw(jpeg, 0, marker: true, timestamp: 2))
-            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 3))
-            .ToArray();
-        var reassembler = new RtpJpegReassembler();
+        var jpeg = FakeJpeg(400);
 
-        var frames = reassembler.Push(wire);
-
-        frames.Select(f => f.Jpeg).ShouldBe([jpeg]);
+        new RtpJpegReassembler().Push(new Rtp(jpeg, Extension: [1, 2, 3, 4, 5, 6, 7, 8]).Build())!.Value.Jpeg.ShouldBe(jpeg);
     }
 
     [Fact]
-    public void A_long_run_of_bytes_with_no_packet_in_it_does_not_grow_without_limit()
+    public void A_header_extension_cut_short_by_the_end_of_the_packet_is_ignored()
     {
-        // A desynchronised stream must not hold every byte it ever received while looking for a
-        // header; after the run, a real stream is still read.
-        var reassembler = new RtpJpegReassembler();
-        var noise = new byte[(1 << 20) + 100];
+        var packet = new byte[14];
+        packet[0] = 0x90;
+        packet[1] = RtpJpegReassembler.JpegPayloadType;
 
-        reassembler.Push(noise).ShouldBeEmpty();
-        var jpeg = FakeJpeg(300);
-        var frames = reassembler.Push(Raw(jpeg, 0, marker: true, timestamp: 1)
-            .Concat(Raw(FakeJpeg(40), 0, marker: true, timestamp: 2)).ToArray());
-
-        frames.Select(f => f.Jpeg).ShouldBe([jpeg]);
+        new RtpJpegReassembler().Push(packet).ShouldBeNull();
     }
 
-    /// <summary>One RTP/JPEG packet with every header field under the test's control.</summary>
-    private static byte[] Raw(byte[] payload, int fragmentOffset, bool marker, uint timestamp, byte quantisation = 1)
+    [Fact]
+    public void Padding_at_the_end_is_not_taken_for_picture()
     {
-        const int jpegHeader = 12;
-        var packet = new byte[jpegHeader + 8 + payload.Length];
-        packet[0] = 0x80;
-        packet[1] = (byte)(RtpJpegReassembler.JpegPayloadType | (marker ? 0x80 : 0x00));
-        BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(2), (ushort)timestamp);
-        BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(4), timestamp);
-        BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(8), Ssrc);
-        packet[jpegHeader + 1] = (byte)((fragmentOffset >> 16) & 0xFF);
-        packet[jpegHeader + 2] = (byte)((fragmentOffset >> 8) & 0xFF);
-        packet[jpegHeader + 3] = (byte)(fragmentOffset & 0xFF);
-        packet[jpegHeader + 4] = 1;
-        packet[jpegHeader + 5] = quantisation;
-        packet[jpegHeader + 6] = 640 / 8;
-        packet[jpegHeader + 7] = 360 / 8;
-        payload.CopyTo(packet.AsSpan(jpegHeader + 8));
-        return packet;
+        var jpeg = FakeJpeg(400);
+
+        new RtpJpegReassembler().Push(new Rtp(jpeg, Padding: 3).Build())!.Value.Jpeg.ShouldBe(jpeg);
+    }
+
+    [Fact]
+    public void A_restart_marker_header_is_stepped_over()
+    {
+        var jpeg = FakeJpeg(400);
+
+        new RtpJpegReassembler().Push(new Rtp(jpeg, Type: 65, Restart: [0, 8, 0xFF, 0xFF]).Build())!.Value.Jpeg.ShouldBe(jpeg);
+    }
+
+    [Fact]
+    public void Inline_quantisation_tables_are_stepped_over_on_the_first_fragment_only()
+    {
+        // This camera sends whole JFIF headers instead, but RFC 2435 allows tables in the first packet.
+        var jpeg = FakeJpeg(1000);
+        var reassembler = new RtpJpegReassembler();
+        reassembler.Push(new Rtp(jpeg[..600], Marker: false, Quality: 255, Tables: new byte[128]).Build()).ShouldBeNull();
+
+        var frame = reassembler.Push(new Rtp(jpeg[600..], Offset: 600, Quality: 255, Sequence: 1).Build());
+
+        frame!.Value.Jpeg.ShouldBe(jpeg);
+    }
+
+    [Fact]
+    public void A_packet_too_short_for_its_jpeg_header_is_ignored()
+    {
+        var packet = new Rtp([]).Build()[..19];
+
+        new RtpJpegReassembler().Push(packet).ShouldBeNull();
+    }
+
+    [Fact]
+    public void A_first_fragment_too_short_for_the_tables_it_promises_is_ignored()
+    {
+        var packet = new Rtp([], Quality: 200).Build();
+
+        new RtpJpegReassembler().Push(packet).ShouldBeNull();
+    }
+
+    [Fact]
+    public void Tables_claiming_more_than_the_packet_holds_are_ignored()
+    {
+        var packet = new Rtp([], Quality: 200, Tables: new byte[10]).Build();
+        BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(20 + 2), 500);
+
+        new RtpJpegReassembler().Push(packet).ShouldBeNull();
+    }
+
+    [Fact]
+    public void A_block_is_called_a_jpeg_only_when_it_starts_and_ends_like_one()
+    {
+        RtpJpegReassembler.LooksLikeJpeg(FakeJpeg(100)).ShouldBeTrue();
+        RtpJpegReassembler.LooksLikeJpeg([0xFF, 0xD8, 0xFF, 0xD9]).ShouldBeFalse();
+        RtpJpegReassembler.LooksLikeJpeg([0x00, 0xD8, 0xFF, 0x00, 0xFF, 0xD9]).ShouldBeFalse();
+        RtpJpegReassembler.LooksLikeJpeg([0xFF, 0x00, 0xFF, 0x00, 0xFF, 0xD9]).ShouldBeFalse();
+        RtpJpegReassembler.LooksLikeJpeg([0xFF, 0xD8, 0x00, 0x00, 0xFF, 0xD9]).ShouldBeFalse();
+        RtpJpegReassembler.LooksLikeJpeg([0xFF, 0xD8, 0xFF, 0x00, 0x00, 0xD9]).ShouldBeFalse();
+        RtpJpegReassembler.LooksLikeJpeg([0xFF, 0xD8, 0xFF, 0x00, 0xFF, 0x00]).ShouldBeFalse();
     }
 
     private static List<CameraFrame> PushAll(RtpJpegReassembler reassembler, IEnumerable<byte[]> packets)
@@ -343,13 +292,26 @@ public sealed class RtpJpegReassemblerTests
         var frames = new List<CameraFrame>();
         foreach (var packet in packets)
         {
-            frames.AddRange(reassembler.Push(packet));
+            if (reassembler.Push(packet) is { } frame)
+            {
+                frames.Add(frame);
+            }
         }
 
-        // A picture is only known to be finished when the next one starts, so a trailing marker
-        // packet is how a test gets the last one out.
-        frames.AddRange(reassembler.Push(Packets(FakeJpeg(50), 640, 360, 10_000, timestamp: 99_999).Single()));
         return frames;
+    }
+
+    /// <summary>A picture cut into fragments the way the reference camera cuts them, numbered from <paramref name="sequence"/>.</summary>
+    private static byte[][] Fragments(byte[] jpeg, int size, uint timestamp = 1000, ushort sequence = 0)
+    {
+        var packets = new List<byte[]>();
+        for (var offset = 0; offset < jpeg.Length; offset += size)
+        {
+            var end = Math.Min(offset + size, jpeg.Length);
+            packets.Add(new Rtp(jpeg[offset..end], offset, end == jpeg.Length, timestamp, sequence++).Build());
+        }
+
+        return [.. packets];
     }
 
     /// <summary>A byte block shaped like a JPEG, which is all reassembly needs it to be.</summary>
@@ -366,33 +328,84 @@ public sealed class RtpJpegReassemblerTests
         return bytes;
     }
 
-    /// <summary>Wraps a picture in RTP/JPEG packets the way the reference camera does.</summary>
-    private static IEnumerable<byte[]> Packets(
-        byte[] jpeg, int width, int height, int fragmentSize, uint timestamp = 1000, uint ssrc = Ssrc)
+    /// <summary>One RTP/JPEG packet with every field under the test's control, laid out as RFC 3550 and RFC 2435 say.</summary>
+    private sealed record Rtp(
+        byte[] Payload,
+        int Offset = 0,
+        bool Marker = true,
+        uint Timestamp = 1000,
+        ushort Sequence = 0,
+        uint Ssrc = Ssrc,
+        byte Type = 1,
+        byte Quality = 1,
+        int Csrcs = 0,
+        byte[]? Extension = null,
+        int Padding = 0,
+        byte[]? Restart = null,
+        byte[]? Tables = null,
+        byte PayloadType = RtpJpegReassembler.JpegPayloadType,
+        int Version = 2)
     {
-        var packets = new List<byte[]>();
-        ushort sequence = 0;
-        for (var offset = 0; offset < jpeg.Length; offset += fragmentSize)
+        public byte[] Build()
         {
-            var size = Math.Min(fragmentSize, jpeg.Length - offset);
-            var packet = new byte[12 + 8 + size];
-            packet[0] = 0x80;
-            packet[1] = (byte)(RtpJpegReassembler.JpegPayloadType
-                | (offset + size >= jpeg.Length ? 0x80 : 0x00));
-            BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(2), sequence++);
-            BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(4), timestamp);
-            BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(8), ssrc);
-            packet[13] = (byte)((offset >> 16) & 0xFF);
-            packet[14] = (byte)((offset >> 8) & 0xFF);
-            packet[15] = (byte)(offset & 0xFF);
-            packet[16] = 1;
-            packet[17] = 1;
-            packet[18] = (byte)(width / 8);
-            packet[19] = (byte)(height / 8);
-            jpeg.AsSpan(offset, size).CopyTo(packet.AsSpan(20));
-            packets.Add(packet);
+            var bytes = new List<byte>
+            {
+                (byte)((Version << 6) | (Padding > 0 ? 0x20 : 0) | (Extension is null ? 0 : 0x10) | Csrcs),
+                (byte)(PayloadType | (Marker ? 0x80 : 0)),
+            };
+            bytes.AddRange(BigEndian16(Sequence));
+            bytes.AddRange(BigEndian32(Timestamp));
+            bytes.AddRange(BigEndian32(Ssrc));
+            for (var i = 0; i < Csrcs; i++)
+            {
+                bytes.AddRange(BigEndian32(0x44444444));
+            }
+
+            if (Extension is not null)
+            {
+                bytes.AddRange(BigEndian16(0xBEDE));
+                bytes.AddRange(BigEndian16((ushort)(Extension.Length / 4)));
+                bytes.AddRange(Extension);
+            }
+
+            bytes.Add(0);
+            bytes.Add((byte)(Offset >> 16));
+            bytes.Add((byte)(Offset >> 8));
+            bytes.Add((byte)Offset);
+            bytes.AddRange([Type, Quality, 640 / 8, 360 / 8]);
+            if (Restart is not null)
+            {
+                bytes.AddRange(Restart);
+            }
+
+            if (Tables is not null)
+            {
+                bytes.AddRange([0, 0]);
+                bytes.AddRange(BigEndian16((ushort)Tables.Length));
+                bytes.AddRange(Tables);
+            }
+
+            bytes.AddRange(Payload);
+            for (var i = 1; i <= Padding; i++)
+            {
+                bytes.Add(i == Padding ? (byte)Padding : (byte)0);
+            }
+
+            return [.. bytes];
         }
 
-        return packets;
+        private static byte[] BigEndian16(ushort value)
+        {
+            var bytes = new byte[2];
+            BinaryPrimitives.WriteUInt16BigEndian(bytes, value);
+            return bytes;
+        }
+
+        private static byte[] BigEndian32(uint value)
+        {
+            var bytes = new byte[4];
+            BinaryPrimitives.WriteUInt32BigEndian(bytes, value);
+            return bytes;
+        }
     }
 }

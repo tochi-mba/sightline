@@ -1,190 +1,306 @@
 using System.Threading.Channels;
+using Sightline.Protocol;
 using Sightline.Protocol.Rtp;
 
 namespace Sightline.Core;
 
 /// <summary>
-/// The camera's one live stream, read without pause and shared by everybody who wants its pictures.
+/// One run of the camera's stream, from starting it to its end, shared by everybody who wants its pictures.
 /// </summary>
 /// <remarks>
 /// <para>
-/// The camera answers one stream connection each time it is switched on, so this is opened once per
-/// session and never closed while the session lasts: watching stops and starts by subscribing, not
-/// by touching the connection. It is read continuously even with nobody subscribed, so the camera is
-/// never left blocked on a connection nobody drains.
+/// It runs while anybody watches. When the last watcher leaves, even before the stream has started, it
+/// ends, and closing its RTSP connection is what stops the camera sending. It also ends when the camera
+/// closes that connection, as browsing its card does, or sends nothing for the stall time, or the start
+/// fails; whoever asks next starts another.
 /// </para>
 /// <para>
-/// Each subscriber gets the newest picture: one that has not been taken by the time the next arrives
-/// is replaced by it, so a slow subscriber sees fewer pictures, never older ones. A new subscriber
-/// starts with the latest picture when it is under a second old, so coming back to the picture shows
-/// one at once.
+/// Each watcher gets the newest picture: one that has not been taken by the time the next arrives is
+/// replaced by it, so a slow watcher sees fewer pictures, never older ones. A new watcher starts with the
+/// latest picture when it is under a second old, so coming back to the picture shows one at once.
 /// </para>
 /// </remarks>
 internal sealed class LiveFeed : IAsyncDisposable
 {
-    private readonly RtspClient rtsp;
-    private readonly Func<Action<string>?> trace;
-    private readonly Func<string, string> ended;
     private const long FreshMilliseconds = 1000;
-    private readonly CancellationTokenSource stopping = new();
-    private readonly List<Channel<CameraFrame>> subscribers = [];
-    private readonly Task pump;
-    private (CameraFrame Frame, long At)? latest;
 
-    /// <summary>Starts reading <paramref name="rtsp"/>, whose PLAY has been answered.</summary>
-    /// <param name="rtsp">The stream connection.</param>
+    // Bigger than any datagram can be, so none is ever cut short.
+    private const int DatagramBuffer = 64 * 1024;
+
+    private readonly Func<CancellationToken, Task<(RtspClient Rtsp, ICameraDatagrams Datagrams)>> start;
+    private readonly TimeSpan stall;
+    private readonly Func<Action<string>?> trace;
+    private readonly Action<LiveFeed> retire;
+    private readonly CancellationTokenSource stopping = new();
+    private readonly TaskCompletionSource closed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly List<Channel<CameraFrame>> watchers = [];
+    private readonly Task running;
+    private (CameraFrame Frame, long At)? latest;
+    private bool over;
+    private int disposed;
+
+    /// <summary>Starts a stream for <paramref name="first"/>, its first watcher.</summary>
+    /// <param name="start">Starts the stream: its RTSP connection, played, and the socket its pictures arrive at.</param>
+    /// <param name="stall">How long the camera may send nothing before the stream is called lost.</param>
     /// <param name="trace">Where trace lines go, read each time so it can be changed meanwhile.</param>
-    /// <param name="ended">Told, once, why the stream ended; returns what subscribers are told.</param>
-    public LiveFeed(RtspClient rtsp, Func<Action<string>?> trace, Func<string, string> ended)
+    /// <param name="retire">Told, once, that this feed is over or that nobody is watching it.</param>
+    /// <param name="first">The first watcher's pictures, which see the start's failure if it fails.</param>
+    public LiveFeed(
+        Func<CancellationToken, Task<(RtspClient Rtsp, ICameraDatagrams Datagrams)>> start,
+        TimeSpan stall,
+        Func<Action<string>?> trace,
+        Action<LiveFeed> retire,
+        out Subscription first)
     {
-        this.rtsp = rtsp;
+        this.start = start;
+        this.stall = stall;
         this.trace = trace;
-        this.ended = ended;
-        pump = Task.Run(() => PumpAsync(stopping.Token));
+        this.retire = retire;
+        first = TrySubscribe()!;
+        running = Task.Run(() => RunAsync(stopping.Token));
     }
 
-    /// <summary>Starts receiving pictures: the latest if it is fresh, then each one that arrives.</summary>
-    /// <remarks>
-    /// One that subscribes after the stream has ended hears nothing, and its wait runs out as a quiet
-    /// spell; asking the session again then says the picture has gone.
-    /// </remarks>
-    public Subscription Subscribe()
+    /// <summary>
+    /// Starts sending pictures to a new watcher: the latest if it is fresh, then each one that arrives.
+    /// </summary>
+    /// <returns>The watcher's pictures, or null once this feed is over and another must be started.</returns>
+    public Subscription? TrySubscribe()
     {
         var channel = Channel.CreateBounded<CameraFrame>(new BoundedChannelOptions(1)
         {
             FullMode = BoundedChannelFullMode.DropOldest,
             SingleReader = true,
         });
-        lock (subscribers)
+        lock (watchers)
         {
+            if (over)
+            {
+                return null;
+            }
+
             if (latest is { } last && Environment.TickCount64 - last.At < FreshMilliseconds)
             {
                 channel.Writer.TryWrite(last.Frame);
             }
 
-            subscribers.Add(channel);
+            watchers.Add(channel);
         }
 
         return new Subscription(this, channel);
     }
 
-    /// <summary>Stops reading and closes the connection: only for the end of the session.</summary>
+    /// <summary>Stops the stream, and waits until its connection and socket are closed. Safe to call more than once.</summary>
     public async ValueTask DisposeAsync()
     {
-        await stopping.CancelAsync().ConfigureAwait(false);
-        await pump.ConfigureAwait(false);
-        await rtsp.DisposeAsync().ConfigureAwait(false);
-        stopping.Dispose();
+        if (Interlocked.Exchange(ref disposed, 1) == 0)
+        {
+            await stopping.CancelAsync().ConfigureAwait(false);
+            await running.ConfigureAwait(false);
+            stopping.Dispose();
+            closed.SetResult();
+        }
+
+        await closed.Task.ConfigureAwait(false);
     }
+
+    /// <summary>A copy of a start's failure for one watcher, of a kind that says what went wrong.</summary>
+    private static Exception Copy(Exception failure) => failure is TimeoutException
+        ? new TimeoutException(failure.Message, failure)
+        : new RtspException(failure.Message, failure);
 
     private void Unsubscribe(Channel<CameraFrame> channel)
     {
-        lock (subscribers)
+        lock (watchers)
         {
-            subscribers.Remove(channel);
+            if (!watchers.Remove(channel) || watchers.Count > 0)
+            {
+                return;
+            }
+
+            // Nobody is watching: no one may join a feed on its way out.
+            over = true;
+        }
+
+        retire(this);
+    }
+
+    /// <summary>
+    /// Starts the stream, then reads its pictures and watches its connection until one of them ends it, or it
+    /// is stopped; then closes both.
+    /// </summary>
+    private async Task RunAsync(CancellationToken stop)
+    {
+        RtspClient rtsp;
+        ICameraDatagrams datagrams;
+        try
+        {
+            (rtsp, datagrams) = await start(stop).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested)
+        {
+            End(null);
+            return;
+        }
+        catch (Exception failure) when (failure is not OutOfMemoryException)
+        {
+            End(() => Copy(failure));
+            return;
+        }
+
+        try
+        {
+            using var either = CancellationTokenSource.CreateLinkedTokenSource(stop);
+            var pumping = PumpAsync(datagrams, either.Token);
+            var watching = WatchAsync(rtsp, either.Token);
+            var first = await Task.WhenAny(pumping, watching).ConfigureAwait(false);
+            await either.CancelAsync().ConfigureAwait(false);
+            await Task.WhenAll(pumping, watching).ConfigureAwait(false);
+            End(stop.IsCancellationRequested ? null : first.Result);
+        }
+        finally
+        {
+            // Closing the connection is what stops the camera sending.
+            await rtsp.DisposeAsync().ConfigureAwait(false);
+            await datagrams.DisposeAsync().ConfigureAwait(false);
         }
     }
 
-    private async Task PumpAsync(CancellationToken cancellationToken)
+    /// <summary>The pictures, until the camera goes quiet or the socket fails; then what to tell watchers.</summary>
+    private async Task<Func<Exception>?> PumpAsync(ICameraDatagrams datagrams, CancellationToken cancellationToken)
     {
-        var reason = "The camera ended its live picture.";
+        var reassembler = new RtpJpegReassembler();
+        var buffer = new byte[DatagramBuffer];
+        var received = 0L;
         try
         {
-            var reassembler = new RtpJpegReassembler();
-            var received = 0L;
             while (true)
             {
-                var bytes = await rtsp.ReadStreamAsync(cancellationToken).ConfigureAwait(false);
-                if (bytes.IsEmpty)
+                var length = await ReceiveAsync(datagrams, buffer, cancellationToken).ConfigureAwait(false);
+                if (received++ == 0)
                 {
-                    trace()?.Invoke($"rtsp: the camera closed the stream after {received} bytes");
-                    break;
+                    trace()?.Invoke($"rtp: first datagram arrived: {Convert.ToHexString(buffer, 0, Math.Min(16, length))}");
                 }
 
-                if (received == 0)
+                if (reassembler.Push(buffer.AsSpan(0, length)) is not { } frame)
                 {
-                    trace()?.Invoke($"rtsp: first stream bytes arrived: {Convert.ToHexString(bytes.Span[..Math.Min(16, bytes.Length)])}");
-                }
-
-                received += bytes.Length;
-                foreach (var frame in reassembler.Push(bytes.Span))
-                {
-                    if (RtpJpegReassembler.LooksLikeJpeg(frame.Jpeg))
+                    if (received == 64 && reassembler.PacketsRead == 0 && trace() is { } noisy)
                     {
-                        Publish(frame);
+                        noisy("rtp: 64 datagrams arrived and none was an RTP/JPEG packet");
                     }
-                    else
-                    {
-                        trace()?.Invoke($"rtsp: a {frame.Jpeg.Length}-byte frame was not a whole JPEG and was skipped");
-                    }
+
+                    continue;
                 }
 
-                if (reassembler.PacketsRead == 0 && received > 64 * 1024 && trace() is { } noisy)
+                if (RtpJpegReassembler.LooksLikeJpeg(frame.Jpeg))
                 {
-                    noisy($"rtsp: {received} bytes arrived but none parsed as an RTP packet");
+                    Publish(frame);
+                }
+                else
+                {
+                    trace()?.Invoke($"rtp: a {frame.Jpeg.Length}-byte picture was not a whole JPEG and was skipped");
                 }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            reason = "The live picture was closed with the camera's session.";
+            return null;
+        }
+        catch (TimeoutException quiet)
+        {
+            trace()?.Invoke("rtp: " + quiet.Message);
+            return () => new TimeoutException(quiet.Message);
         }
         catch (Exception failure) when (failure is not OutOfMemoryException)
         {
-            reason = $"The live picture was lost: {failure.Message}";
+            return () => new RtspException($"The stream was lost: {failure.Message}", failure);
         }
+    }
 
-        End(reason);
+    /// <summary>The stream's connection, until the camera closes it; then what to tell watchers.</summary>
+    private async Task<Func<Exception>?> WatchAsync(RtspClient rtsp, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await rtsp.WaitForCloseAsync(cancellationToken).ConfigureAwait(false);
+            trace()?.Invoke("rtsp: the camera closed the stream");
+            return null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (Exception failure) when (failure is not OutOfMemoryException)
+        {
+            return () => new RtspException($"The stream was lost: {failure.Message}", failure);
+        }
+    }
+
+    private async Task<int> ReceiveAsync(ICameraDatagrams datagrams, byte[] buffer, CancellationToken cancellationToken)
+    {
+        using var quiet = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        quiet.CancelAfter(stall);
+        try
+        {
+            return await datagrams.ReceiveAsync(buffer, quiet.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"The camera sent nothing for {stall.TotalSeconds:0} seconds.");
+        }
     }
 
     private void Publish(CameraFrame frame)
     {
-        lock (subscribers)
+        lock (watchers)
         {
             latest = (frame, Environment.TickCount64);
-            foreach (var subscriber in subscribers)
+            foreach (var watcher in watchers)
             {
-                subscriber.Writer.TryWrite(frame);
+                watcher.Writer.TryWrite(frame);
             }
         }
     }
 
-    private void End(string reason)
+    /// <summary>Tells every watcher the stream is over: quietly, or with what went wrong.</summary>
+    private void End(Func<Exception>? failure)
     {
-        var told = ended(reason);
-        lock (subscribers)
+        bool retiring;
+        lock (watchers)
         {
+            retiring = !over;
+            over = true;
             latest = null;
-            foreach (var subscriber in subscribers)
+            foreach (var watcher in watchers)
             {
-                subscriber.Writer.TryComplete(new LivePictureUnavailableException(told));
+                watcher.Writer.TryComplete(failure?.Invoke());
             }
 
-            subscribers.Clear();
+            watchers.Clear();
+        }
+
+        if (retiring)
+        {
+            retire(this);
         }
     }
 
-    /// <summary>One subscriber's pictures. Disposing it stops them, and leaves the stream running.</summary>
+    /// <summary>One watcher's pictures. Disposing it stops them, and ends the feed if nobody else is watching.</summary>
     internal sealed class Subscription(LiveFeed feed, Channel<CameraFrame> channel) : IDisposable
     {
-        /// <summary>The next picture, waiting at most <paramref name="stall"/> for it.</summary>
-        /// <exception cref="TimeoutException">Nothing arrived in time; the stream is still open.</exception>
-        /// <exception cref="LivePictureUnavailableException">The stream has ended for good.</exception>
-        public async Task<CameraFrame> NextAsync(TimeSpan stall, CancellationToken cancellationToken)
+        /// <summary>The next picture, or null once the stream is over without a fault.</summary>
+        /// <exception cref="TimeoutException">The stream did not start in time, or the camera went quiet.</exception>
+        /// <exception cref="RtspException">The stream could not start, or its connection or socket failed.</exception>
+        public async Task<CameraFrame?> NextAsync(CancellationToken cancellationToken)
         {
-            using var waiting = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            waiting.CancelAfter(stall);
             try
             {
-                return await channel.Reader.ReadAsync(waiting.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                throw new TimeoutException($"The camera sent nothing for {stall.TotalSeconds:0} seconds.");
+                return await channel.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
             }
             catch (ChannelClosedException closed)
             {
-                throw new LivePictureUnavailableException(closed.InnerException!.Message, closed);
+                // Each watcher is told with an exception of its own, never thrown before, so throwing it here
+                // gives it this watcher's stack.
+                return closed.InnerException is { } failure ? throw failure : null;
             }
         }
 

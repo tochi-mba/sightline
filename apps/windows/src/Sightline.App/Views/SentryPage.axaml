@@ -9,7 +9,7 @@
       <TextBlock Classes="eyebrow" Text="SENTRY" />
       <TextBlock Name="State" Classes="title" Text="{Binding State}" />
       <TextBlock Classes="muted" TextWrapping="Wrap" MaxWidth="640" HorizontalAlignment="Left"
-                 Text="Sightline watches the camera's picture for movement, with the window in the tray, and tells you when something moves. Nothing leaves this PC. Arming starts the live picture: once it has run, the camera's own buttons stay stuck until its battery is taken out and put back." />
+                 Text="Sightline watches the camera's picture for movement, with the window in the tray, and tells you when something moves. Nothing leaves this PC." />
       <TextBlock Classes="muted" TextWrapping="Wrap" MaxWidth="640" HorizontalAlignment="Left" Text="{Binding Summary}" />
     </StackPanel>
 

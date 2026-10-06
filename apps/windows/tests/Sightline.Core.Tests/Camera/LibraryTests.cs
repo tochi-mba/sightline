@@ -41,6 +41,7 @@ public sealed class LibraryTests
     public async Task The_card_is_listed_with_thumbnails_and_the_camera_put_back()
     {
         await using var camera = await WithCardAsync();
+        camera.Control.IsStreaming = false;
 
         var files = await ListedAsync(camera);
 
@@ -52,23 +53,7 @@ public sealed class LibraryTests
     }
 
     [Fact]
-    public async Task Reading_the_card_ends_the_live_picture_until_the_camera_restarts()
-    {
-        await using var camera = await WithCardAsync();
-        camera.Controller.HoldLive("window");
-        camera.Controller.ShowLivePicture();
-        (await camera.UntilAsync(s => s.Live is LiveView.Playing)).HoldsLivePicture.ShouldBeTrue();
-
-        var files = await ListedAsync(camera);
-
-        files.Count.ShouldBe(2);
-        camera.Seen.ShouldContain(s => s.Live is LiveView.Paused);
-        (await camera.UntilAsync(s => s.Live is LiveView.Unavailable)).HoldsLivePicture.ShouldBeFalse();
-        camera.Streams.Count.ShouldBe(1);
-    }
-
-    [Fact]
-    public async Task Files_whose_thumbnails_the_camera_will_not_give_are_listed_anyway()
+    public async Task A_file_the_camera_has_no_thumbnail_for_is_listed_without_one()
     {
         await using var camera = await WithCardAsync();
         camera.Control.ForcedRefusals[GpSockCommand.PlaybackGetThumbnail] = NakCode.GetThumbnailFail;
@@ -77,6 +62,23 @@ public sealed class LibraryTests
 
         files.Count.ShouldBe(2);
         camera.State.Library.Thumbnails.ShouldBeEmpty();
+        camera.State.Library.Reading.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Reading_the_card_pauses_the_live_view_and_starts_it_again()
+    {
+        await using var camera = await WithCardAsync();
+        camera.Controller.HoldLive("window");
+        await camera.UntilAsync(s => s.Live is LiveView.Playing);
+
+        var files = await ListedAsync(camera);
+
+        // Browse mode ends the camera's stream, so its thumbnails come as they would with no picture running.
+        files.Count.ShouldBe(2);
+        camera.State.Library.Thumbnails.Count.ShouldBe(2);
+        camera.Seen.ShouldContain(s => s.Live is LiveView.Paused);
+        await ControllerHarness.EventuallyAsync(() => camera.Streams.Count >= 2);
     }
 
     [Fact]

@@ -75,11 +75,6 @@ public sealed partial class CardItem : ObservableObject, IDisposable
 /// The camera's card: its files by day with their thumbnails, copying them to this PC, and deleting them
 /// from the card after a confirmation.
 /// </summary>
-/// <remarks>
-/// The camera lists its card only in browse mode, which ends its live picture until it is switched off
-/// and on. So the card is read by itself only while that costs nothing; once the picture has been seen,
-/// the page says what reading the card will cost and waits to be asked.
-/// </remarks>
 public sealed partial class LibraryViewModel : ObservableObject, IDisposable
 {
     private readonly AppParts parts;
@@ -133,14 +128,11 @@ public sealed partial class LibraryViewModel : ObservableObject, IDisposable
     /// <summary>Where copies go.</summary>
     public string Folder => parts.Preferences.Current.DownloadFolder ?? FolderSink.DefaultFolder;
 
-    /// <summary>
-    /// Reads the card the first time the page is opened with a camera connected, unless that would end a
-    /// live picture the person has: then it waits for the button.
-    /// </summary>
+    /// <summary>Reads the card the first time the page is opened with a camera connected.</summary>
     public void Opened()
     {
         var state = parts.Controller.State;
-        if (state.IsConnected && state.Library.Files is null && !state.Library.Reading && !state.HoldsLivePicture)
+        if (state.IsConnected && state.Library.Files is null && !state.Library.Reading)
         {
             _ = parts.Controller.RefreshLibrary();
         }
@@ -180,10 +172,7 @@ public sealed partial class LibraryViewModel : ObservableObject, IDisposable
         (Heading, Detail) = (Connected, library.Reading, library.Files) switch
         {
             (false, _, _) => ("No camera connected", "Connect a camera to see what is on its card."),
-            (_, true, _) => ("Reading the card", "The camera is listing its files."),
-            (_, _, null) when state.HoldsLivePicture => ("The card",
-                "Reading the card ends the live picture, which then needs the camera's battery taken out and put "
-                + "back: it cannot show its picture and list its files at once."),
+            (_, true, _) => ("Reading the card", "The live picture pauses while the camera lists its files."),
             (_, _, null) => ("The card", "Read the card to see what is on it."),
             (_, _, { Count: 0 }) => ("The card is empty", "The camera says its card is empty, or that it has no card."),
             (_, _, var files) => (CardWords.Count(files), $"Copies go to {Folder}."),

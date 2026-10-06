@@ -7,19 +7,18 @@ namespace Sightline.Core.Testing;
 
 /// <summary>The camera's network over a fake camera, which joins unless told to fail.</summary>
 /// <remarks>
-/// The camera behind it keeps the reference camera's rule for its picture: it answers the first stream
-/// connection after it is switched on and no other, until <see cref="PowerCycle"/>; and browse mode
-/// hangs up the one it is serving.
+/// The camera behind it keeps the reference camera's rule for its stream: browse mode hangs up the stream it
+/// is sending, and a new one is answered whenever it is asked for.
 /// </remarks>
 public sealed class FakeLink : ICameraLink
 {
     private readonly FakeCamera control;
-    private int served;
 
     /// <summary>A network onto <paramref name="control"/>.</summary>
     public FakeLink(FakeCamera control)
     {
         this.control = control;
+        Sockets = new FakeCameraSockets(port => port == GpSockConnection.Port ? ControlTransport?.Invoke() ?? control : OpenStream());
         control.EnteredBrowse += () =>
         {
             lock (Streams)
@@ -35,14 +34,8 @@ public sealed class FakeLink : ICameraLink
     /// <summary>The camera's control channel.</summary>
     public FakeCamera Control => control;
 
-    /// <summary>Switches the camera off and on: its next stream connection is answered again.</summary>
-    public void PowerCycle()
-    {
-        lock (Streams)
-        {
-            served = 0;
-        }
-    }
+    /// <summary>The camera's network: its connections, and the sockets its streams go to.</summary>
+    public FakeCameraSockets Sockets { get; }
 
     /// <summary>Whether each join was a reconnect, in order.</summary>
     public List<bool> Requests { get; } = [];
@@ -82,24 +75,18 @@ public sealed class FakeLink : ICameraLink
             throw failure;
         }
 
-        var lease = new FakeLease(this);
+        var lease = new FakeLease(Sockets);
         Leases.Add(lease);
         return lease;
     }
 
     /// <summary>Opens a new stream, set up as <see cref="Stream"/> says.</summary>
-    internal FakeRtspCamera OpenStream()
+    private FakeRtspCamera OpenStream()
     {
         var stream = new FakeRtspCamera { StreamStarted = () => control.IsStreaming };
         Stream(stream);
         lock (Streams)
         {
-            if (served++ > 0)
-            {
-                // A connection after the first since power-on: accepted, and never answered.
-                stream.NeverAnswers ??= "DESCRIBE";
-            }
-
             Streams.Add(stream);
         }
 
@@ -108,7 +95,7 @@ public sealed class FakeLink : ICameraLink
 }
 
 /// <summary>The camera's network while held, which the test can have the system lose.</summary>
-public sealed class FakeLease(FakeLink link) : ICameraLease
+public sealed class FakeLease(FakeCameraSockets sockets) : ICameraLease
 {
     private readonly TaskCompletionSource lost = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -122,8 +109,10 @@ public sealed class FakeLease(FakeLink link) : ICameraLease
     public void Lose() => lost.TrySetResult();
 
     /// <inheritdoc />
-    public ICameraTransport Transport(int port) =>
-        port == GpSockConnection.Port ? link.ControlTransport?.Invoke() ?? link.Control : link.OpenStream();
+    public ICameraTransport Transport(int port) => sockets.Transport(port);
+
+    /// <inheritdoc />
+    public ICameraDatagrams Datagrams() => sockets.Datagrams();
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()

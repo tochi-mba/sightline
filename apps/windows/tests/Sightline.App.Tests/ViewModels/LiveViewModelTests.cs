@@ -28,7 +28,6 @@ public sealed class LiveViewModelTests
         live.Message.ShouldBeNull();
 
         await app.ConnectedAsync();
-        app.Controller.ShowLivePicture();
 
         await TestApp.EventuallyAsync(() => live.Picture is not null);
         var first = live.Picture;
@@ -47,7 +46,6 @@ public sealed class LiveViewModelTests
         await using var app = new TestApp(Returning);
         using var shell = new ShellViewModel(app.Parts);
         await app.ConnectedAsync();
-        app.Controller.ShowLivePicture();
         await TestApp.EventuallyAsync(() => shell.Live.Picture is not null);
 
         await app.Controller.DisconnectAsync();
@@ -70,7 +68,6 @@ public sealed class LiveViewModelTests
         using var shell = new ShellViewModel(app.Parts);
 
         await app.ConnectedAsync();
-        app.Controller.ShowLivePicture();
 
         await TestApp.EventuallyAsync(() => shell.Live.FrameRate.EndsWith(" fps", StringComparison.Ordinal));
     }
@@ -105,7 +102,6 @@ public sealed class LiveViewModelTests
         using var shell = new ShellViewModel(app.Parts);
         var live = shell.Live;
         await app.ConnectedAsync();
-        app.Controller.ShowLivePicture();
         await TestApp.EventuallyAsync(() => live.Picture is not null);
 
         live.SaveSnapshotCommand.Execute(null);
@@ -164,7 +160,6 @@ public sealed class LiveViewModelTests
         live.Shown(true);
 
         await app.ConnectedAsync();
-        app.Controller.ShowLivePicture();
         await TestApp.EventuallyAsync(() => Volatile.Read(ref pictures) >= 5);
 
         Action[] posted;
@@ -187,11 +182,7 @@ public sealed class LiveViewModelTests
         app.Controller.StateChanged += _ => live.Apply(app.Controller.State);
         live.Shown(true);
         await app.ConnectedAsync();
-        await TestApp.EventuallyAsync(() => live.Offered);
-        live.Message.ShouldBe(CameraWords.OfferedPicture);
-        live.ShowPictureCommand.Execute(null);
         await TestApp.EventuallyAsync(() => app.Controller.State.Live is LiveView.Playing);
-        live.Offered.ShouldBeFalse();
 
         live.Shown(false);
         await TestApp.EventuallyAsync(() => app.Controller.State.Live is LiveView.Off);

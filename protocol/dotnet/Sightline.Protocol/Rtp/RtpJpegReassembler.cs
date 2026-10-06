@@ -10,25 +10,20 @@ namespace Sightline.Protocol.Rtp;
 public readonly record struct CameraFrame(byte[] Jpeg, uint RtpTimestamp, int Width, int Height);
 
 /// <summary>
-/// Turns the camera's stream into pictures.
+/// Turns the camera's RTP packets, one datagram each, into pictures.
 /// </summary>
 /// <remarks>
 /// <para>
-/// Two things about this camera make a stock RTSP stack the wrong tool, and both are why this
-/// class exists.
+/// RFC 2435 cuts each picture into fragments, each carrying its offset into the picture, and sets the
+/// marker bit on the last. A picture is handed on only when every fragment of it arrived in order: UDP
+/// drops a packet now and then, and a picture with a hole in it decodes as a smear, not a frame. One that
+/// lost a fragment is counted in <see cref="PicturesDropped"/> and the next one is waited for.
 /// </para>
 /// <para>
-/// <b>There is no interleaved framing.</b> The camera answers a TCP transport request with
-/// <c>interleaved=0-1</c> and then sends bare RTP packets down the connection, with none of the
-/// <c>$</c>, channel and length bytes that RFC 2326 requires. A reader that looks for that framing
-/// finds <c>$</c> bytes at random points inside JPEG data and produces nonsense. Packets are
-/// instead split on the RTP header itself, anchored to the stream's own synchronisation source.
-/// </para>
-/// <para>
-/// <b>Each frame already carries its JFIF header.</b> RFC 2435 strips the quantisation and Huffman
-/// tables from the wire and expects the receiver to rebuild them; this camera leaves a complete
-/// JFIF document in the payload. So fragments are simply concatenated, and none of that
-/// reconstruction is needed or wanted.
+/// <b>Each picture already carries its JFIF header.</b> RFC 2435 strips the quantisation and Huffman
+/// tables from the wire and expects the receiver to rebuild them; this camera leaves a complete JFIF
+/// document in the payload. So fragments are simply put together, and none of that reconstruction is
+/// needed or wanted.
 /// </para>
 /// </remarks>
 public sealed class RtpJpegReassembler
@@ -38,199 +33,93 @@ public sealed class RtpJpegReassembler
 
     private const int RtpHeaderLength = 12;
     private const int JpegHeaderLength = 8;
+    private const int RestartHeaderLength = 4;
 
-    private readonly List<byte> stream = [];
-    private readonly List<byte> frame = [];
-    private uint? synchronisationSource;
-    private uint currentTimestamp;
+    private readonly List<byte> picture = [];
+    private uint? source;
+    private ushort? lastSequence;
+    private uint timestamp;
     private int width;
     private int height;
     private bool building;
 
-    /// <summary>How many packets have been read.</summary>
+    /// <summary>How many RTP/JPEG packets have been taken.</summary>
     public int PacketsRead { get; private set; }
 
-    /// <summary>How many packets were dropped because the sequence number jumped.</summary>
+    /// <summary>How many packets never arrived, going by the gaps in their sequence numbers.</summary>
     public int PacketsLost { get; private set; }
 
-    private ushort? lastSequence;
+    /// <summary>How many pictures were thrown away because a fragment of them never arrived.</summary>
+    public int PicturesDropped { get; private set; }
 
     /// <summary>
-    /// Adds bytes from the connection and returns any pictures they completed.
+    /// Takes one packet, and returns the picture it finished, if it finished one.
     /// </summary>
-    /// <param name="bytes">Whatever the last read produced; boundaries do not matter.</param>
-    public IReadOnlyList<CameraFrame> Push(ReadOnlySpan<byte> bytes)
+    /// <param name="packet">One datagram as it arrived. Anything that is not an RTP/JPEG packet is ignored.</param>
+    public CameraFrame? Push(ReadOnlySpan<byte> packet)
     {
-        stream.AddRange(bytes);
-        var finished = new List<CameraFrame>();
-
-        while (true)
+        if (!TryFindPayload(packet, out var header, out var payload, out var end))
         {
-            var span = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(stream);
-            var start = FindPacketStart(span, 0);
-            if (start < 0)
+            return null;
+        }
+
+        PacketsRead++;
+        var ssrc = BinaryPrimitives.ReadUInt32BigEndian(packet[8..]);
+        if (source != ssrc)
+        {
+            // A new sender, or the same camera starting a new stream: nothing in hand belongs with it.
+            source = ssrc;
+            lastSequence = null;
+            Abandon(counted: false);
+        }
+
+        var sequence = BinaryPrimitives.ReadUInt16BigEndian(packet[2..]);
+        if (lastSequence is { } previous)
+        {
+            var gap = (ushort)(sequence - previous - 1);
+            if (gap is > 0 and < 0x8000)
             {
-                // Nothing usable yet. Keep a little context so a header split across two reads is
-                // still found, and drop the rest so a desynchronised stream cannot grow forever.
-                if (stream.Count > 1 << 20)
-                {
-                    stream.RemoveRange(0, stream.Count - RtpHeaderLength);
-                }
-
-                return finished;
+                PacketsLost += gap;
             }
-
-            // The stream's sender is fixed by its first packet before that packet's end is looked
-            // for. Otherwise the end is found by accepting a header from anyone, and twelve bytes of
-            // picture data shaped like one cut the first packet short; the rest is then thrown away
-            // as noise and the first picture arrives without its start.
-            synchronisationSource ??= BinaryPrimitives.ReadUInt32BigEndian(span[(start + 8)..]);
-            var next = FindPacketStart(span, start + RtpHeaderLength);
-            if (next < 0)
-            {
-                // The last packet in the buffer is only complete once the next one has begun, so
-                // wait rather than emitting a half-read fragment.
-                if (start > 0)
-                {
-                    stream.RemoveRange(0, start);
-                }
-
-                return finished;
-            }
-
-            var packet = span[start..next].ToArray();
-            stream.RemoveRange(0, next);
-            Consume(packet, finished);
-        }
-    }
-
-    /// <summary>Whether a packet begins at <paramref name="offset"/>, which has a whole header after it.</summary>
-    private bool IsPacketStart(ReadOnlySpan<byte> span, int offset)
-    {
-        // Version 2, no padding or extension, and the JPEG payload type. The marker bit varies.
-        if (span[offset] != 0x80 || (span[offset + 1] & 0x7F) != JpegPayloadType)
-        {
-            return false;
-        }
-
-        var ssrc = BinaryPrimitives.ReadUInt32BigEndian(span[(offset + 8)..]);
-        return synchronisationSource is null || ssrc == synchronisationSource;
-    }
-
-    private int FindPacketStart(ReadOnlySpan<byte> span, int from)
-    {
-        for (var offset = from; offset + RtpHeaderLength <= span.Length; offset++)
-        {
-            if (IsPacketStart(span, offset))
-            {
-                return offset;
-            }
-        }
-
-        return -1;
-    }
-
-    /// <summary>
-    /// Takes one packet, adding any pictures it finished to <paramref name="finished"/>.
-    /// </summary>
-    /// <remarks>
-    /// A single packet can finish two pictures: its fragment offset of zero ends the one before it,
-    /// and its marker bit ends its own. That happens whenever a picture fits in one packet.
-    /// </remarks>
-    private void Consume(byte[] packet, List<CameraFrame> finished)
-    {
-        if (packet.Length < RtpHeaderLength + JpegHeaderLength)
-        {
-            return;
-        }
-
-        // Push fixed the source from the first packet. With no length on the wire, a packet from any
-        // other sender cannot be told from picture data: its header is not recognised, so its bytes
-        // stay inside the packet around them. The camera sends one source — only the video track is
-        // set up — so this costs nothing in practice, and it is stated rather than claimed away.
-
-        var marker = (packet[1] & 0x80) != 0;
-        var sequence = BinaryPrimitives.ReadUInt16BigEndian(packet.AsSpan(2));
-        if (lastSequence is { } previous && (ushort)(previous + 1) != sequence)
-        {
-            PacketsLost++;
         }
 
         lastSequence = sequence;
-        PacketsRead++;
+        var marker = (packet[1] & 0x80) != 0;
+        var stamp = BinaryPrimitives.ReadUInt32BigEndian(packet[4..]);
+        var jpeg = packet[header..];
+        var offset = (jpeg[1] << 16) | (jpeg[2] << 8) | jpeg[3];
 
-        var timestamp = BinaryPrimitives.ReadUInt32BigEndian(packet.AsSpan(4));
-
-        // The JPEG header follows the RTP header directly: IsPacketStart accepts only a first byte
-        // of 0x80, so no packet that gets here lists contributing sources in between. RFC 2435:
-        // type-specific, a 24-bit fragment offset, type, Q, then width and height in units of
-        // eight pixels.
-        const int jpegHeader = RtpHeaderLength;
-        var fragmentOffset = (packet[jpegHeader + 1] << 16)
-            | (packet[jpegHeader + 2] << 8)
-            | packet[jpegHeader + 3];
-        var quantisation = packet[jpegHeader + 5];
-        var payload = jpegHeader + JpegHeaderLength;
-
-        if (quantisation >= 128 && fragmentOffset == 0 && packet.Length >= payload + 4)
+        if (offset == 0)
         {
-            // Tables are inline. This camera does not use them — it sends a whole JFIF header
-            // instead — but skipping them correctly costs one line and keeps this honest RFC 2435.
-            var tableLength = BinaryPrimitives.ReadUInt16BigEndian(packet.AsSpan(payload + 2));
-            payload += 4 + tableLength;
-        }
-
-        if (payload > packet.Length)
-        {
-            return;
-        }
-
-        if (fragmentOffset == 0)
-        {
-            // A new picture starts. Anything still being built belongs to the one before it, which
-            // is how a camera that never sets the marker bit still produces frames.
-            if (building && frame.Count > 0)
-            {
-                finished.Add(Finish());
-            }
-
-            frame.Clear();
+            // A picture starts. One still being put together never got its last fragment.
+            Abandon(counted: true);
             building = true;
-            currentTimestamp = timestamp;
-            width = packet[jpegHeader + 6] * 8;
-            height = packet[jpegHeader + 7] * 8;
+            timestamp = stamp;
+            width = jpeg[6] * 8;
+            height = jpeg[7] * 8;
         }
-
-        if (!building)
+        else if (!building)
         {
-            // Joined the stream mid-picture. Those fragments can never make a whole file, so they
-            // are dropped rather than written out as a broken one.
-            return;
+            // Joined part-way through a picture, or after one was abandoned: wait for the next.
+            return null;
         }
-
-        frame.AddRange(packet.AsSpan(payload));
-
-        if (marker)
+        else if (offset != picture.Count || stamp != timestamp)
         {
-            // RFC 2435 marks the last packet of a picture, which is what lets a frame be delivered
-            // as soon as it is whole rather than when the next one begins.
-            finished.Add(Finish());
-            frame.Clear();
-            building = false;
+            // A fragment before this one never arrived.
+            Abandon(counted: true);
+            return null;
         }
-    }
 
-    private CameraFrame Finish()
-    {
-        var jpeg = frame.ToArray();
-        // The camera ends its frames properly, but a dropped last fragment would otherwise produce
-        // a file no decoder will open.
-        if (jpeg.Length < 2 || jpeg[^2] != 0xFF || jpeg[^1] != 0xD9)
+        picture.AddRange(packet[payload..end]);
+        if (!marker)
         {
-            jpeg = [.. jpeg, 0xFF, 0xD9];
+            return null;
         }
 
-        return new CameraFrame(jpeg, currentTimestamp, width, height);
+        var finished = new CameraFrame([.. picture], timestamp, width, height);
+        picture.Clear();
+        building = false;
+        return finished;
     }
 
     /// <summary>Whether a block of bytes looks like a complete JPEG.</summary>
@@ -238,4 +127,82 @@ public sealed class RtpJpegReassembler
         bytes.Length > 4
         && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF
         && bytes[^2] == 0xFF && bytes[^1] == 0xD9;
+
+    /// <summary>
+    /// Finds where the picture's bytes lie in <paramref name="packet"/>, after the RTP header with any
+    /// contributing sources and extension, the JPEG header, any restart header and any inline tables, and
+    /// before any padding.
+    /// </summary>
+    /// <returns>False for anything that is not a well-formed RTP/JPEG packet.</returns>
+    private static bool TryFindPayload(ReadOnlySpan<byte> packet, out int header, out int start, out int end)
+    {
+        header = start = end = 0;
+        if (packet.Length < RtpHeaderLength
+            || packet[0] >> 6 != 2
+            || (packet[1] & 0x7F) != JpegPayloadType)
+        {
+            return false;
+        }
+
+        end = packet.Length;
+        if ((packet[0] & 0x20) != 0)
+        {
+            // Padding: its last byte says how much there is.
+            end -= packet[^1];
+        }
+
+        var at = RtpHeaderLength + (4 * (packet[0] & 0x0F));
+        if ((packet[0] & 0x10) != 0)
+        {
+            if (at + 4 > end)
+            {
+                return false;
+            }
+
+            at += 4 + (4 * BinaryPrimitives.ReadUInt16BigEndian(packet[(at + 2)..]));
+        }
+
+        // RFC 2435: type-specific, a 24-bit fragment offset, type, Q, then width and height in eights.
+        if (at + JpegHeaderLength > end)
+        {
+            return false;
+        }
+
+        header = at;
+        var type = packet[at + 4];
+        var quality = packet[at + 5];
+        var fragmentStart = packet[at + 1] == 0 && packet[at + 2] == 0 && packet[at + 3] == 0;
+        at += JpegHeaderLength;
+        if (type >= 64)
+        {
+            at += RestartHeaderLength;
+        }
+
+        if (quality >= 128 && fragmentStart)
+        {
+            // Tables inline. This camera sends a whole JFIF header instead, but skipping them correctly
+            // costs a few lines and keeps this honest RFC 2435.
+            if (at + 4 > end)
+            {
+                return false;
+            }
+
+            at += 4 + BinaryPrimitives.ReadUInt16BigEndian(packet[(at + 2)..]);
+        }
+
+        start = at;
+        return start <= end;
+    }
+
+    /// <summary>Lets go of any picture being put together, counting it as dropped when asked to.</summary>
+    private void Abandon(bool counted)
+    {
+        if (building && counted)
+        {
+            PicturesDropped++;
+        }
+
+        picture.Clear();
+        building = false;
+    }
 }

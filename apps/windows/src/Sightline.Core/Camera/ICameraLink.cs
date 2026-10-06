@@ -18,12 +18,11 @@ public interface ICameraLink
     Task<ICameraLease> JoinAsync(bool reconnecting, CancellationToken cancellationToken);
 }
 
-/// <summary>The camera's network, held until disposed.</summary>
-public interface ICameraLease : IAsyncDisposable
+/// <summary>
+/// The camera's network, held until disposed: connections and sockets sent from this PC's address on it.
+/// </summary>
+public interface ICameraLease : ICameraSockets, IAsyncDisposable
 {
-    /// <summary>A transport to <paramref name="port"/> on the camera, sent from this PC's address on its network.</summary>
-    ICameraTransport Transport(int port);
-
     /// <summary>Completes once the camera's network is known to be lost.</summary>
     Task Lost { get; }
 }

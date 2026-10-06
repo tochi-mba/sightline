@@ -16,6 +16,8 @@ internal sealed class ControllerHarness : IAsyncDisposable
         LongAnswer: TimeSpan.FromSeconds(3),
         TransferStall: TimeSpan.FromMilliseconds(400),
         StatusInterval: TimeSpan.FromMilliseconds(100),
+        LiveRetry: TimeSpan.FromMilliseconds(50),
+        LiveRetryCap: TimeSpan.FromMilliseconds(150),
         ReconnectDelay: TimeSpan.FromMilliseconds(50),
         ReconnectAttempts: 3);
 

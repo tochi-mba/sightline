@@ -4,6 +4,7 @@ using Sightline.Core.Connectivity;
 using Sightline.Core.Testing;
 using Sightline.Protocol;
 using System.Net;
+using System.Net.Sockets;
 using Xunit;
 
 namespace Sightline.Core.Tests.Camera;
@@ -37,6 +38,19 @@ public sealed class WifiCameraLinkTests
         await lease.DisposeAsync();
         lease.Lost.IsCompleted.ShouldBeFalse();
         wlan.Calls.ShouldContain($"disconnect {Adapters.DongleId}");
+    }
+
+    [Fact]
+    public async Task The_streams_socket_is_bound_to_the_adapters_address_too()
+    {
+        // 192.168.100.255 is the camera network's broadcast address, which no machine has, so binding there is
+        // refused: that is how this shows the socket asked for the adapter's address rather than any.
+        var nobodys = IPAddress.Parse("192.168.100.255");
+        wlan.AdapterList.Add(Adapters.Dongle());
+        network.Addresses[Adapters.DongleId] = [nobodys];
+        await using var lease = await Link(Dongle).JoinAsync(reconnecting: false, CancellationToken.None);
+
+        Should.Throw<SocketException>(() => lease.Datagrams()).SocketErrorCode.ShouldBe(SocketError.AddressNotAvailable);
     }
 
     [Fact]

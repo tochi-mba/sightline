@@ -28,6 +28,9 @@ public sealed class RtspClientTests
         + "a=rtpmap:97 L16/16000/1\r\n"
         + "a=control:track1\r\n";
 
+    /// <summary>The Transport header the reference camera answered SETUP with on 2026-10-06.</summary>
+    private const string ReferenceTransport = "RTP/AVP;unicast;client_port=63721-63722;server_port=59728-59729";
+
     [Fact]
     public async Task The_video_track_is_the_stream_url_with_track0_after_the_query_string()
     {
@@ -44,7 +47,7 @@ public sealed class RtspClientTests
         // appears to be answered with "v=0".
         var transport = new ScriptedTransport([
             Reply(200, ReferenceSdp),
-            Reply(200, "", ("Session", "DEDEDEDEDEDEDEDEDEDEDEDEDEDEDE"), ("Transport", "RTP/AVP/TCP;unicast;interleaved=0-1")),
+            Reply(200, "", ("Session", "DEDEDEDEDEDEDEDEDEDEDEDEDEDEDE"), ("Transport", ReferenceTransport)),
         ]);
         var client = new RtspClient(transport, "192.168.100.1");
         await client.ConnectAsync(CancellationToken.None);
@@ -52,7 +55,7 @@ public sealed class RtspClientTests
         var describe = await client.DescribeAsync(CancellationToken.None);
         describe.Body.ShouldContain("m=video 0 RTP/AVP 26");
 
-        var setup = await client.SetupVideoAsync(CancellationToken.None);
+        var setup = await client.SetupVideoAsync(63721, CancellationToken.None);
         setup.IsSuccess.ShouldBeTrue();
         client.Session.ShouldBe("DEDEDEDEDEDEDEDEDEDEDEDEDEDEDE");
     }
@@ -67,24 +70,70 @@ public sealed class RtspClientTests
         var client = new RtspClient(transport, "192.168.100.1");
         await client.ConnectAsync(CancellationToken.None);
 
-        await client.SetupVideoAsync(CancellationToken.None);
+        await client.SetupVideoAsync(50100, CancellationToken.None);
         await client.PlayAsync(CancellationToken.None);
 
         transport.Sent.ShouldContain(text => text.Contains("Session: 222222222222222222222222222222", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task The_setup_asks_for_the_stream_over_the_same_connection()
+    public async Task The_setup_asks_for_the_stream_as_datagrams_to_the_port_given()
     {
-        // Inbound UDP is what a firewall drops, so the TCP transport is requested first.
+        // Over this connection instead, the camera streams once per power-on and then leaves its buttons stuck.
         var transport = new ScriptedTransport([Reply(200, "")]);
         var client = new RtspClient(transport, "192.168.100.1");
         await client.ConnectAsync(CancellationToken.None);
 
-        await client.SetupVideoAsync(CancellationToken.None);
+        await client.SetupVideoAsync(63721, CancellationToken.None);
 
-        transport.Sent[0].ShouldContain("Transport: RTP/AVP/TCP");
-        transport.Sent[0].ShouldContain("/?action=stream/track0");
+        transport.Sent[0].ShouldStartWith("SETUP rtsp://192.168.100.1:8080/?action=stream/track0 RTSP/1.0");
+        transport.Sent[0].ShouldContain("Transport: RTP/AVP;unicast;client_port=63721-63722\r\n");
+    }
+
+    [Fact]
+    public async Task The_port_the_camera_streams_from_is_read_from_its_setup_reply()
+    {
+        var transport = new ScriptedTransport([Reply(200, "", ("Transport", ReferenceTransport), ("Session", "F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0"))]);
+        var client = new RtspClient(transport, "192.168.100.1");
+        await client.ConnectAsync(CancellationToken.None);
+
+        await client.SetupVideoAsync(63721, CancellationToken.None);
+
+        client.ServerPort.ShouldBe(59728);
+        client.Session.ShouldBe("F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0");
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("RTP/AVP;unicast;client_port=63721-63722")]
+    [InlineData("RTP/AVP;unicast;server_port")]
+    [InlineData("RTP/AVP;unicast;server_port=many")]
+    [InlineData("RTP/AVP;unicast;server_port=0-1")]
+    [InlineData("RTP/AVP;unicast;server_port=70000-70001")]
+    [InlineData("RTP/AVP;unicast;server_port=-5")]
+    public async Task A_setup_reply_with_no_usable_server_port_leaves_it_unknown(string? header)
+    {
+        var headers = header is null ? [] : new[] { ("Transport", header) };
+        var transport = new ScriptedTransport([Reply(200, "", headers)]);
+        var client = new RtspClient(transport, "192.168.100.1");
+        await client.ConnectAsync(CancellationToken.None);
+
+        (await client.SetupVideoAsync(50100, CancellationToken.None)).IsSuccess.ShouldBeTrue();
+
+        client.ServerPort.ShouldBeNull();
+        client.Session.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task The_server_port_is_found_whatever_its_case_and_wherever_it_comes()
+    {
+        var transport = new ScriptedTransport([Reply(200, "", ("Transport", "RTP/AVP;unicast; Server_Port=6970;client_port=50100-50101"))]);
+        var client = new RtspClient(transport, "192.168.100.1");
+        await client.ConnectAsync(CancellationToken.None);
+
+        await client.SetupVideoAsync(50100, CancellationToken.None);
+
+        client.ServerPort.ShouldBe(6970);
     }
 
     [Fact]
@@ -94,28 +143,40 @@ public sealed class RtspClientTests
         var client = new RtspClient(transport, "192.168.100.1");
         await client.ConnectAsync(CancellationToken.None);
 
-        var reply = await client.SetupVideoAsync(CancellationToken.None);
+        var reply = await client.SetupVideoAsync(50100, CancellationToken.None);
 
         reply.IsSuccess.ShouldBeFalse();
         reply.StatusCode.ShouldBe(404);
         client.Session.ShouldBeNull();
+        client.ServerPort.ShouldBeNull();
     }
 
     [Fact]
-    public async Task Stream_bytes_that_arrived_with_the_play_reply_are_not_lost()
+    public async Task Waiting_for_the_close_ends_when_the_camera_closes_the_connection_whatever_it_sent_first()
     {
-        // The camera often packs the first RTP bytes into the same read as the PLAY reply. Dropping
-        // them loses the start of the first picture.
+        // Browsing the card is the camera closing the stream's connection. Anything it sends before that is not
+        // the stream, which comes as datagrams.
         var play = Reply(200, "");
-        var withStream = play.Concat(new byte[] { 0x80, 0x1A, 0x00, 0x01 }).ToArray();
-        var transport = new ScriptedTransport([withStream]);
+        var transport = new ScriptedTransport([[.. play, 1, 2, 3], [4, 5, 6]]);
         var client = new RtspClient(transport, "192.168.100.1");
         await client.ConnectAsync(CancellationToken.None);
-
         await client.PlayAsync(CancellationToken.None);
-        var stream = await client.ReadStreamAsync(CancellationToken.None);
+        await transport.SendAsync(Array.Empty<byte>(), CancellationToken.None);
 
-        stream.ToArray().ShouldBe(new byte[] { 0x80, 0x1A, 0x00, 0x01 });
+        await client.WaitForCloseAsync(CancellationToken.None);
+
+        transport.Reads.ShouldBe(3);
+    }
+
+    [Fact]
+    public async Task Waiting_for_the_close_can_be_given_up()
+    {
+        var transport = new ScriptedTransport([]) { BlocksWhenEmpty = true };
+        var client = new RtspClient(transport, "192.168.100.1");
+        await client.ConnectAsync(CancellationToken.None);
+        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+        await Should.ThrowAsync<OperationCanceledException>(() => client.WaitForCloseAsync(cancel.Token));
     }
 
     [Fact]
@@ -157,27 +218,13 @@ public sealed class RtspClientTests
         var transport = new ScriptedTransport([Reply(200, "", ("Session", "6363636363636363636363636363")), Reply(200, "")]);
         var client = new RtspClient(transport, "192.168.100.1");
         await client.ConnectAsync(CancellationToken.None);
-        await client.SetupVideoAsync(CancellationToken.None);
+        await client.SetupVideoAsync(50100, CancellationToken.None);
 
         var reply = await client.PlayAsync(CancellationToken.None);
 
         reply.IsSuccess.ShouldBeTrue();
         transport.Sent[^1].ShouldStartWith("PLAY rtsp://192.168.100.1:8080/?action=stream RTSP/1.0");
         transport.Sent[^1].ShouldContain("Session: 6363636363636363636363636363");
-    }
-
-    [Fact]
-    public async Task Stream_bytes_are_read_straight_from_the_connection_once_nothing_is_carried_over()
-    {
-        var transport = new ScriptedTransport([Reply(200, ""), [0x80, 0x1A, 9, 9]]);
-        var client = new RtspClient(transport, "192.168.100.1");
-        await client.ConnectAsync(CancellationToken.None);
-        await client.OptionsAsync(CancellationToken.None);
-        await transport.SendAsync(Array.Empty<byte>(), CancellationToken.None);
-
-        var stream = await client.ReadStreamAsync(CancellationToken.None);
-
-        stream.ToArray().ShouldBe(new byte[] { 0x80, 0x1A, 9, 9 });
     }
 
     [Theory]
@@ -279,6 +326,10 @@ public sealed class RtspClientTests
 
         public int DribbleBytes { get; init; }
 
+        public bool BlocksWhenEmpty { get; init; }
+
+        public int Reads { get; private set; }
+
         public bool IsConnected { get; private set; }
 
         public Task ConnectAsync(CancellationToken cancellationToken)
@@ -298,11 +349,17 @@ public sealed class RtspClientTests
             return Task.CompletedTask;
         }
 
-        public Task<int> ReceiveAsync(Memory<byte> into, CancellationToken cancellationToken)
+        public async Task<int> ReceiveAsync(Memory<byte> into, CancellationToken cancellationToken)
         {
+            Reads++;
             if (queued.Count == 0)
             {
-                return Task.FromResult(0);
+                if (BlocksWhenEmpty)
+                {
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                }
+
+                return 0;
             }
 
             var reply = queued.Dequeue();
@@ -321,7 +378,7 @@ public sealed class RtspClientTests
                 }
             }
 
-            return Task.FromResult(take);
+            return take;
         }
 
         public ValueTask DisposeAsync()

@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
+using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Sightline.Protocol;
 
 namespace Sightline.Testing;
@@ -10,29 +12,35 @@ namespace Sightline.Testing;
 /// <remarks>
 /// <para>
 /// It behaves as the reference camera was measured to: it answers DESCRIBE with the real SDP and a
-/// body length, SETUP with a session made of one byte repeated, and after PLAY it sends bare RTP
-/// with no interleaved framing — but only once the control channel has started the stream, which
-/// is what <see cref="StreamStarted"/> asks. Until then, and after the last frame unless told to
-/// close, it simply goes quiet, as the real one does.
+/// body length, SETUP with a session made of one byte repeated and the port it streams from, and after
+/// PLAY it sends its pictures as datagrams to the port SETUP named on its <see cref="Sockets"/> — but only
+/// once the control channel has started the stream, which is what <see cref="StreamStarted"/> asks. Until
+/// then, and after the last picture unless told otherwise, it simply goes quiet, as the real one does.
 /// </para>
 /// <para>
-/// Like the real one it cannot be stopped: TEARDOWN answers 501 and PAUSE answers 200, and the
-/// pictures keep coming either way. Only the camera can end it, which <see cref="HangUp"/> does as
-/// browse mode does on the real camera. That the camera answers just one connection per power-on is
-/// the business of whoever hands these out; <see cref="NeverAnswers"/> is how a refused one looks.
+/// The stream ends when either side closes this connection: the client by disposing it, or the camera,
+/// which <see cref="HangUp"/> does as browse mode does on the real one, and which
+/// <see cref="ClosesAfterFrames"/> does once its last picture has been taken.
 /// </para>
 /// </remarks>
-public sealed class FakeRtspCamera : ICameraTransport
+public sealed partial class FakeRtspCamera : ICameraTransport
 {
     /// <summary>The SDP the reference camera sent on 2026-10-02.</summary>
     public const string ReferenceSdp =
         "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Test\r\na=type:broadcast\r\nt=0 0\r\nc=IN IP4 0.0.0.0\r\n"
         + "m=video 0 RTP/AVP 26\r\na=control:track0\r\nm=audio 0 RTP/AVP 97\r\na=rtpmap:97 L16/16000/1\r\na=control:track1\r\n";
 
+    /// <summary>The port the reference camera streamed from on 2026-10-06.</summary>
+    public const int ReferenceServerPort = 59728;
+
     private readonly Queue<byte[]> outbox = new();
     private readonly TaskCompletionSource hungUp = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly HashSet<byte[]> paced = new(ReferenceEqualityComparer.Instance);
+    private FakeCameraDatagrams? streamingTo;
+    private int? clientPort;
     private ushort sequence;
+
+    /// <summary>Where the datagrams go: the sockets of the network this connection was opened on.</summary>
+    public FakeCameraSockets? Sockets { get; set; }
 
     /// <summary>Whether the control channel has started the media flow; no packets flow until it has.</summary>
     public Func<bool> StreamStarted { get; set; } = () => true;
@@ -40,17 +48,20 @@ public sealed class FakeRtspCamera : ICameraTransport
     /// <summary>The pictures to send after PLAY, in order. Each goes as one marked RTP packet.</summary>
     public List<byte[]> Frames { get; } = [];
 
-    /// <summary>Bytes sent after PLAY before any packet: noise that is not RTP at all.</summary>
-    public byte[]? NoiseAfterPlay { get; set; }
+    /// <summary>Datagrams sent after PLAY before any picture: noise that is not RTP at all.</summary>
+    public List<byte[]> NoiseAfterPlay { get; } = [];
 
-    /// <summary>When set, reading after the last frame fails with this, as a connection that drops does.</summary>
+    /// <summary>When set, this connection fails with it once the last picture has been taken.</summary>
     public Exception? BreaksWith { get; set; }
 
-    /// <summary>When set, the connection closes after the last frame instead of going quiet.</summary>
+    /// <summary>When set, the camera closes this connection once the last picture has been taken.</summary>
     public bool ClosesAfterFrames { get; set; }
 
     /// <summary>The status SETUP answers with.</summary>
     public int SetupStatus { get; set; } = 200;
+
+    /// <summary>The Transport header SETUP answers with, or null for the reference camera's.</summary>
+    public string? SetupTransport { get; set; }
 
     /// <summary>The status PLAY answers with.</summary>
     public int PlayStatus { get; set; } = 200;
@@ -64,8 +75,14 @@ public sealed class FakeRtspCamera : ICameraTransport
     /// <summary>The verbs received, in order.</summary>
     public List<string> Verbs { get; } = [];
 
+    /// <summary>The requests received, whole, in order.</summary>
+    public List<string> Requests { get; } = [];
+
     /// <inheritdoc />
     public bool IsConnected { get; private set; }
+
+    /// <summary>Whether the client has closed this connection.</summary>
+    public bool WasDisposed { get; private set; }
 
     /// <inheritdoc />
     public Task ConnectAsync(CancellationToken cancellationToken)
@@ -77,7 +94,9 @@ public sealed class FakeRtspCamera : ICameraTransport
     /// <inheritdoc />
     public Task SendAsync(ReadOnlyMemory<byte> bytes, CancellationToken cancellationToken)
     {
-        var verb = Encoding.ASCII.GetString(bytes.Span).Split(' ')[0];
+        var request = Encoding.ASCII.GetString(bytes.Span);
+        var verb = request.Split(' ')[0];
+        Requests.Add(request);
         Verbs.Add(verb);
         if (verb == NeverAnswers)
         {
@@ -90,39 +109,33 @@ public sealed class FakeRtspCamera : ICameraTransport
                 Reply(200, ReferenceSdp);
                 break;
             case "SETUP":
-                Reply(SetupStatus, "", SetupStatus == 200 ? ("Session", "636363636363636363636363636363") : null);
+                var port = ClientPort().Match(request);
+                clientPort = port.Success ? int.Parse(port.Groups[1].Value, CultureInfo.InvariantCulture) : null;
+                var transport = SetupTransport
+                    ?? $"RTP/AVP;unicast;client_port={clientPort}-{clientPort + 1};server_port={ReferenceServerPort}-{ReferenceServerPort + 1}";
+                Reply(SetupStatus, "", SetupStatus == 200
+                    ? [("Transport", transport), ("Session", "636363636363636363636363636363")]
+                    : []);
                 break;
             case "PLAY":
                 Reply(PlayStatus, "");
-                if (PlayStatus == 200 && StreamStarted())
+                if (PlayStatus == 200 && StreamStarted() && clientPort is { } to && Sockets?.At(to) is { } socket)
                 {
-                    if (NoiseAfterPlay is { } noise)
+                    streamingTo = socket;
+                    foreach (var noise in NoiseAfterPlay)
                     {
-                        outbox.Enqueue(noise);
+                        socket.Deliver(noise);
                     }
 
                     foreach (var frame in Frames)
                     {
-                        var packet = Packet(frame);
-                        paced.Add(packet);
-                        outbox.Enqueue(packet);
+                        socket.Deliver(Packet(frame, sequence++), Pace);
                     }
-
-                    // A picture is only known to be over when the next packet starts, as on the wire.
-                    outbox.Enqueue(Packet([0xFF, 0xD8, 0xFF, 0xD9]));
                 }
 
                 break;
-            case "TEARDOWN":
-                // Listed by OPTIONS, and not implemented: the stream carries on regardless.
-                Reply(501, "");
-                break;
-            case "PAUSE":
-                // Answered, and ignored.
-                Reply(200, "");
-                break;
             default:
-                Reply(200, "", ("Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE"));
+                Reply(200, "", [("Public", "DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE")]);
                 break;
         }
 
@@ -134,24 +147,21 @@ public sealed class FakeRtspCamera : ICameraTransport
     {
         if (outbox.Count == 0)
         {
-            if (BreaksWith is { } broken && Verbs.Contains("PLAY"))
-            {
-                throw broken;
-            }
-
-            if ((ClosesAfterFrames && Verbs.Contains("PLAY")) || hungUp.Task.IsCompleted)
+            if (hungUp.Task.IsCompleted)
             {
                 return 0;
+            }
+
+            if ((ClosesAfterFrames || BreaksWith is not null) && Verbs.Contains("PLAY"))
+            {
+                // The camera ends the stream once the last picture has gone, not before.
+                await (streamingTo?.Idle ?? Task.CompletedTask).WaitAsync(cancellationToken).ConfigureAwait(false);
+                return BreaksWith is { } broken ? throw broken : 0;
             }
 
             // Quiet: nothing comes until whoever is reading gives up, or the camera hangs up.
             await hungUp.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             return 0;
-        }
-
-        if (Pace > TimeSpan.Zero && paced.Remove(outbox.Peek()))
-        {
-            await Task.Delay(Pace, cancellationToken).ConfigureAwait(false);
         }
 
         // At most the reader's buffer, like a real socket; the remainder waits its turn.
@@ -172,51 +182,22 @@ public sealed class FakeRtspCamera : ICameraTransport
         return take;
     }
 
-    /// <summary>The camera ends the connection, as entering browse mode does: what is in flight is dropped.</summary>
+    /// <summary>The camera ends the stream, as entering browse mode does: what is in flight is dropped.</summary>
     public void HangUp()
     {
         outbox.Clear();
+        streamingTo?.Drop();
         hungUp.TrySetResult();
     }
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()
     {
+        // Closing the connection is what stops the real camera sending.
         IsConnected = false;
+        WasDisposed = true;
+        streamingTo?.Drop();
         return ValueTask.CompletedTask;
-    }
-
-    private void Reply(int status, string body, (string Name, string Value)? header = null)
-    {
-        var text = new StringBuilder($"RTSP/1.0 {status} {status switch { 200 => "OK", 501 => "Not Implemented", _ => "Error" }}\r\nCSeq: 1\r\n");
-        if (header is { } h)
-        {
-            text.Append(h.Name).Append(": ").Append(h.Value).Append("\r\n");
-        }
-
-        if (body.Length > 0)
-        {
-            text.Append("Content-Length: ").Append(Encoding.UTF8.GetByteCount(body)).Append("\r\n");
-        }
-
-        outbox.Enqueue(Encoding.UTF8.GetBytes(text.Append("\r\n").Append(body).ToString()));
-    }
-
-    /// <summary>One RTP/JPEG packet carrying a whole picture: 640 by 360, the marker set.</summary>
-    private byte[] Packet(byte[] jpeg)
-    {
-        var packet = new byte[20 + jpeg.Length];
-        packet[0] = 0x80;
-        packet[1] = 0x80 | 26;
-        BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(2), sequence++);
-        BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(4), sequence * 7380u);
-        BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(8), 0x63636363);
-        packet[16] = 1;
-        packet[17] = 1;
-        packet[18] = 640 / 8;
-        packet[19] = 360 / 8;
-        jpeg.CopyTo(packet, 20);
-        return packet;
     }
 
     /// <summary>A block shaped like a JPEG, which is all reassembly and the session need.</summary>
@@ -232,4 +213,41 @@ public sealed class FakeRtspCamera : ICameraTransport
         bytes[^1] = 0xD9;
         return bytes;
     }
+
+    private void Reply(int status, string body, (string Name, string Value)[]? headers = null)
+    {
+        var text = new StringBuilder($"RTSP/1.0 {status} {status switch { 200 => "OK", _ => "Error" }}\r\nCSeq: 1\r\n");
+        foreach (var (name, value) in headers ?? [])
+        {
+            text.Append(name).Append(": ").Append(value).Append("\r\n");
+        }
+
+        if (body.Length > 0)
+        {
+            text.Append("Content-Length: ").Append(Encoding.UTF8.GetByteCount(body)).Append("\r\n");
+        }
+
+        outbox.Enqueue(Encoding.UTF8.GetBytes(text.Append("\r\n").Append(body).ToString()));
+    }
+
+    /// <summary>One RTP/JPEG packet carrying a whole picture: 640 by 360, the marker set, numbered <paramref name="sequence"/>.</summary>
+    public static byte[] Packet(byte[] jpeg, ushort sequence)
+    {
+        ArgumentNullException.ThrowIfNull(jpeg);
+        var packet = new byte[20 + jpeg.Length];
+        packet[0] = 0x80;
+        packet[1] = 0x80 | 26;
+        BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(2), sequence);
+        BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(4), (sequence + 1u) * 7380u);
+        BinaryPrimitives.WriteUInt32BigEndian(packet.AsSpan(8), 0x63636363);
+        packet[16] = 1;
+        packet[17] = 1;
+        packet[18] = 640 / 8;
+        packet[19] = 360 / 8;
+        jpeg.CopyTo(packet, 20);
+        return packet;
+    }
+
+    [GeneratedRegex(@"client_port=(\d+)")]
+    private static partial Regex ClientPort();
 }

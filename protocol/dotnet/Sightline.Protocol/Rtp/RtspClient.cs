@@ -35,8 +35,9 @@ public sealed record RtspReply(int StatusCode, IReadOnlyDictionary<string, strin
 /// and every later read is misaligned, which looks like the camera talking nonsense.
 /// </item>
 /// <item>
-/// After PLAY the camera sends bare RTP with no interleaved framing, whatever transport it agreed
-/// to. <see cref="RtpJpegReassembler"/> is what makes sense of that.
+/// The stream must be asked for over UDP. Asked for over this connection, the camera sends bare RTP
+/// with no interleaved framing, answers that only once each time it is switched on, and leaves its own
+/// buttons stuck once the stream ends, until its battery comes out. Over UDP it does none of that.
 /// </item>
 /// </list>
 /// <para>
@@ -72,6 +73,15 @@ public sealed class RtspClient : IAsyncDisposable
     /// <summary>The session the camera gave us, once SETUP has succeeded.</summary>
     public string? Session { get; private set; }
 
+    /// <summary>
+    /// The port the camera sends the stream from, once SETUP has succeeded, or null if it did not say.
+    /// </summary>
+    /// <remarks>
+    /// A datagram sent to it from the stream's own port is what lets the stream in through a firewall
+    /// that drops what it did not ask for, as Windows does on a public network.
+    /// </remarks>
+    public int? ServerPort { get; private set; }
+
     /// <summary>The URL of the video track, which is the base URL plus the track name.</summary>
     public string VideoTrackUrl => baseUrl + "/track0";
 
@@ -87,18 +97,25 @@ public sealed class RtspClient : IAsyncDisposable
     public Task<RtspReply> DescribeAsync(CancellationToken cancellationToken = default) =>
         SendAsync("DESCRIBE", baseUrl, new() { ["Accept"] = "application/sdp" }, cancellationToken);
 
-    /// <summary>Sets up the video track, asking for the stream over this same connection.</summary>
-    public async Task<RtspReply> SetupVideoAsync(CancellationToken cancellationToken = default)
+    /// <summary>Sets up the video track, asking for the stream as datagrams to <paramref name="clientPort"/>.</summary>
+    /// <param name="clientPort">The local port the datagrams are to arrive at.</param>
+    /// <param name="cancellationToken">Gives up.</param>
+    public async Task<RtspReply> SetupVideoAsync(int clientPort, CancellationToken cancellationToken = default)
     {
         var reply = await SendAsync(
             "SETUP",
             VideoTrackUrl,
-            new() { ["Transport"] = "RTP/AVP/TCP;unicast;interleaved=0-1" },
+            new() { ["Transport"] = string.Create(CultureInfo.InvariantCulture, $"RTP/AVP;unicast;client_port={clientPort}-{clientPort + 1}") },
             cancellationToken).ConfigureAwait(false);
 
-        if (reply.IsSuccess && reply.Header("Session") is { } session)
+        if (reply.IsSuccess)
         {
-            Session = session.Split(';')[0].Trim();
+            if (reply.Header("Session") is { } session)
+            {
+                Session = session.Split(';')[0].Trim();
+            }
+
+            ServerPort = ServerPortIn(reply.Header("Transport"));
         }
 
         return reply;
@@ -109,21 +126,34 @@ public sealed class RtspClient : IAsyncDisposable
         SendAsync("PLAY", baseUrl, new() { ["Range"] = "npt=0.000-" }, cancellationToken);
 
     /// <summary>
-    /// Reads whatever stream bytes have arrived, for feeding to a reassembler.
+    /// Waits for the camera to close this connection, which is how it ends a stream: browsing its card
+    /// does, for one. Anything it sends meanwhile is not the stream, which comes as datagrams, and is
+    /// let go of.
     /// </summary>
-    /// <returns>The bytes read, which is empty when the camera has stopped sending.</returns>
-    public async Task<ReadOnlyMemory<byte>> ReadStreamAsync(CancellationToken cancellationToken = default)
+    public async Task WaitForCloseAsync(CancellationToken cancellationToken = default)
     {
-        if (pending.Count > 0)
+        pending.Clear();
+        while (await transport.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false) > 0)
         {
-            // Bytes that arrived in the same read as the PLAY reply are stream data already.
-            var carried = pending.ToArray();
-            pending.Clear();
-            return carried;
+        }
+    }
+
+    /// <summary>The first port of the <c>server_port</c> in a SETUP reply's Transport header, if it has one.</summary>
+    private static int? ServerPortIn(string? transport)
+    {
+        foreach (var part in (transport ?? "").Split(';'))
+        {
+            var pair = part.Split('=', 2);
+            if (pair.Length == 2
+                && pair[0].Trim().Equals("server_port", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(pair[1].Split('-')[0], NumberStyles.None, CultureInfo.InvariantCulture, out var port)
+                && port is > 0 and <= 65535)
+            {
+                return port;
+            }
         }
 
-        var read = await transport.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
-        return buffer.AsMemory(0, read);
+        return null;
     }
 
     private async Task<RtspReply> SendAsync(

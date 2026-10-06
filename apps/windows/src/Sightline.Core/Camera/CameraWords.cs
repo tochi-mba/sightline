@@ -18,14 +18,6 @@ public static class CameraWords
         _ => null,
     };
 
-    /// <summary>What showing the live picture costs, said before it is asked for.</summary>
-    public const string OfferedPicture =
-        "The live picture is off. Once it has run, the camera's own buttons stay stuck until its battery is taken out and put back.";
-
-    /// <summary>Said on leaving a camera whose live picture ran: what it now needs.</summary>
-    public const string ButtonsStuck =
-        "The camera's own buttons stay stuck after its live picture until its battery is taken out and put back.";
-
     /// <summary>Why the picture is not simply playing, in words, or null when it is.</summary>
     public static string? Picture(CameraState camera)
     {
@@ -33,11 +25,9 @@ public static class CameraWords
         return (camera.Connection, camera.Live) switch
         {
             (Camera.Connection.Reconnecting r, _) => $"Reconnecting to the camera, attempt {r.Attempt} of {r.Of}",
-            (_, LiveView.Interrupted) => "The camera stopped sending its picture. Waiting for it.",
+            (_, LiveView.Interrupted) => "The picture stopped. Starting it again.",
             (_, LiveView.Starting) => "Starting the picture",
-            (_, LiveView.Paused) => "The card is being read",
-            (_, LiveView.Offered) => OfferedPicture,
-            (_, LiveView.Unavailable) => "The live picture has ended. Take the camera's battery out and put it back to see it again.",
+            (_, LiveView.Paused) => "Paused while the card is read",
             _ => null,
         };
     }

@@ -58,7 +58,7 @@ public sealed class ShellViewModelTests
     }
 
     [AvaloniaFact]
-    public async Task Opening_joins_the_last_camera_without_consenting_for_anybody_and_offers_its_picture()
+    public async Task Opening_joins_the_last_camera_without_consenting_for_anybody_and_shows_its_picture()
     {
         var adapter = Adapters.DongleId;
         await using var app = new TestApp(Returning with { LastAdapter = adapter, LastCamera = "ActionCam_1", CameraPassword = "camera-pass" });
@@ -72,10 +72,7 @@ public sealed class ShellViewModelTests
         await TestApp.EventuallyAsync(() => shell.Camera.IsConnected);
         shell.ConnectionWord.ShouldBe("Connected");
         shell.ShowsConnect.ShouldBeFalse();
-        // The Live page shows first and offers the picture, which starts only when asked for.
-        await TestApp.EventuallyAsync(() => shell.Live.Offered);
-        app.Link.Streams.ShouldBeEmpty();
-        shell.Live.ShowPictureCommand.Execute(null);
+        // The Live page shows first, and holds the picture open while it does.
         await TestApp.EventuallyAsync(() => shell.Live.Picture is not null);
     }
 
@@ -109,41 +106,23 @@ public sealed class ShellViewModelTests
     {
         await using var app = new TestApp(Returning);
         using var shell = new ShellViewModel(app.Parts);
+        app.Control.AddFile('J', new DateTime(2026, 10, 4, 18, 35, 0), TestPictures.Jpeg(120));
         await app.ConnectedAsync();
-        await TestApp.EventuallyAsync(() => shell.Live.Offered);
-        shell.Live.ShowPictureCommand.Execute(null);
         await TestApp.EventuallyAsync(() => app.Controller.State.Live is LiveView.Playing);
 
         shell.GoCommand.Execute(Page.Library);
+
         (shell.IsLive, shell.IsLibrary, shell.IsSentry, shell.IsSettings).ShouldBe((false, true, false, false));
+        await TestApp.EventuallyAsync(() => shell.Library.Items.Count == 1);
         await TestApp.EventuallyAsync(() => app.Controller.State.Live is LiveView.Off);
+
         shell.GoCommand.Execute(Page.Sentry);
         shell.IsSentry.ShouldBeTrue();
         shell.GoCommand.Execute(Page.Settings);
         shell.IsSettings.ShouldBeTrue();
         shell.GoCommand.Execute(Page.Live);
-
         shell.IsLive.ShouldBeTrue();
         await TestApp.EventuallyAsync(() => app.Controller.State.Live is LiveView.Playing);
-    }
-
-    [AvaloniaFact]
-    public async Task After_the_card_is_read_the_live_page_says_the_camera_needs_switching_off_and_on()
-    {
-        await using var app = new TestApp(Returning);
-        using var shell = new ShellViewModel(app.Parts);
-        app.Control.AddFile('J', new DateTime(2026, 10, 4, 18, 35, 0), TestPictures.Jpeg(120));
-        await app.ConnectedAsync();
-        app.Controller.ShowLivePicture();
-        await TestApp.EventuallyAsync(() => app.Controller.State.HoldsLivePicture);
-        shell.GoCommand.Execute(Page.Library);
-        shell.Library.RefreshCommand.Execute(null);
-        await TestApp.EventuallyAsync(() => shell.Library.Items.Count == 1 && shell.Library.Idle);
-
-        shell.GoCommand.Execute(Page.Live);
-
-        await TestApp.EventuallyAsync(() => app.Controller.State.Live is LiveView.Unavailable);
-        shell.Live.Message.ShouldBe("The live picture has ended. Take the camera's battery out and put it back to see it again.");
     }
 
     [AvaloniaFact]

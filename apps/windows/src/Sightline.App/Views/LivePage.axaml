@@ -45,15 +45,9 @@
                   IsVisible="{Binding Live.FrameRate, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
             <TextBlock Classes="readout" FontSize="11" Text="{Binding Live.FrameRate}" />
           </Border>
-          <Border Classes="badge" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="14" MaxWidth="460"
+          <Border Classes="badge" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="14"
                   IsVisible="{Binding Live.Message, Converter={x:Static ObjectConverters.IsNotNull}}">
-            <StackPanel Spacing="10">
-              <TextBlock Name="PictureMessage" Text="{Binding Live.Message}" FontSize="12"
-                         TextWrapping="Wrap" TextAlignment="Center" />
-              <!-- Never started unasked: once it has run, the camera's own buttons stay stuck. -->
-              <Button Name="ShowPicture" Classes="primary" HorizontalAlignment="Center" Content="Show the live picture"
-                      Command="{Binding Live.ShowPictureCommand}" IsVisible="{Binding Live.Offered}" />
-            </StackPanel>
+            <TextBlock Name="PictureMessage" Text="{Binding Live.Message}" FontSize="12" />
           </Border>
         </Panel>
       </Border>

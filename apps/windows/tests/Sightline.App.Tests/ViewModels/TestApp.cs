@@ -25,6 +25,8 @@ internal sealed class TestApp : IAsyncDisposable
         LongAnswer: TimeSpan.FromSeconds(3),
         TransferStall: TimeSpan.FromMilliseconds(400),
         StatusInterval: TimeSpan.FromMilliseconds(100),
+        LiveRetry: TimeSpan.FromMilliseconds(50),
+        LiveRetryCap: TimeSpan.FromMilliseconds(150),
         ReconnectDelay: TimeSpan.FromMilliseconds(50),
         ReconnectAttempts: 3);
 
@@ -45,16 +47,7 @@ internal sealed class TestApp : IAsyncDisposable
             Preferences.Update(_ => preferences);
         }
 
-        // A dozen pictures a second for minutes, as the real camera streams: its one stream is shared, so
-        // a page that comes back to the picture finds it still coming.
-        Link = new FakeLink(ReferenceCamera.Fake())
-        {
-            Stream = s =>
-            {
-                s.Pace = TimeSpan.FromMilliseconds(80);
-                s.Frames.AddRange(Enumerable.Repeat(TestPictures.Jpeg(90), 3000));
-            },
-        };
+        Link = new FakeLink(ReferenceCamera.Fake()) { Stream = s => s.Frames.Add(TestPictures.Jpeg(90)) };
         Controller = new CameraController(Link, Quick, QuickStream, () => Preferences.Current.Reconnect);
         Alarms = new WindowsSentryActions(Path.Combine(Folder, "sentry"));
         Sentry = new SentryRunner(Controller, () => Preferences.Current.Sentry, Alarms, LumaSampler.Grid);

@@ -88,6 +88,8 @@ public sealed class WifiCameraLink : ICameraLink
         public ICameraTransport Transport(int port) =>
             new TcpCameraTransport(new IPEndPoint(CameraAddress.Default, port), local);
 
+        public ICameraDatagrams Datagrams() => new UdpCameraDatagrams(CameraAddress.Default, local);
+
         public async ValueTask DisposeAsync()
         {
             await watching.CancelAsync().ConfigureAwait(false);
