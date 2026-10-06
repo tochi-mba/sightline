@@ -87,6 +87,22 @@
       </StackPanel>
 
       <StackPanel Spacing="8">
+        <TextBlock Classes="eyebrow" Text="UPDATES" />
+        <ToggleSwitch Content="Look for a newer version when Sightline opens" IsChecked="{Binding CheckForUpdates}" />
+        <TextBlock Name="UpdateStatus" TextWrapping="Wrap" Text="{Binding Updates.Status}" />
+        <TextBlock Classes="muted" TextWrapping="Wrap" Text="{Binding Updates.RestartNote}"
+                   IsVisible="{Binding Updates.RestartNote, Converter={x:Static ObjectConverters.IsNotNull}}" />
+        <StackPanel Orientation="Horizontal" Spacing="10">
+          <Button Content="Look now" Command="{Binding Updates.CheckCommand}" IsVisible="{Binding !Updates.Portable}" />
+          <Button Name="RestartToUpdate" Classes="primary" Content="Restart to update" Command="{Binding Updates.RestartCommand}"
+                  IsVisible="{Binding Updates.Ready, Converter={x:Static ObjectConverters.IsNotNull}}" />
+          <Button Content="Open the download page" Command="{Binding Updates.OpenDownloadPageCommand}" IsVisible="{Binding Updates.Portable}" />
+        </StackPanel>
+        <TextBlock Classes="muted" TextWrapping="Wrap"
+                   Text="Only GitHub is asked, and only which version is newest. Nothing about you or your camera is sent." />
+      </StackPanel>
+
+      <StackPanel Spacing="8">
         <TextBlock Classes="eyebrow" Text="SIGHTLINE" />
         <ToggleSwitch Content="Keep running in the tray when the window closes" IsChecked="{Binding CloseToTray}" />
         <TextBlock Text="{Binding Version, StringFormat='Version {0}'}" />

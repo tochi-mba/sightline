@@ -11,6 +11,7 @@ using Sightline.Core.Camera;
 using Sightline.Core.Connectivity;
 using Sightline.Core.Sentry;
 using Sightline.Core.Settings;
+using Sightline.Platform.Windows.Install;
 using Sightline.Platform.Windows.Network;
 using Sightline.Platform.Windows.Wlan;
 
@@ -38,6 +39,8 @@ public sealed class SightlineApplication : Application
             desktop.MainWindow = window;
             ShowTray(desktop, window, shell);
             Instance?.OnWake(() => Dispatcher.UIThread.Post(window.Bring));
+            // The installer replacing this build asks it to quit, which leaves the camera properly.
+            Instance?.OnQuit(() => Dispatcher.UIThread.Post(() => desktop.Shutdown()));
             desktop.ShutdownRequested += (_, _) => close();
         }
 
@@ -94,7 +97,8 @@ public sealed class SightlineApplication : Application
             Pictures.Decode,
             action => Dispatcher.UIThread.Post(action),
             AppVersion.Of(typeof(SightlineApplication)),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Sightline"));
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Sightline"),
+            Updates: new VelopackUpdateSource());
         var shell = new ShellViewModel(parts);
 
         return (shell, () =>

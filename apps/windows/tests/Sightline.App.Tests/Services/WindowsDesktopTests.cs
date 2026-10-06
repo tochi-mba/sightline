@@ -58,7 +58,16 @@ public sealed class WindowsDesktopTests : IDisposable
         version.ShouldNotContain("+");
         version.ShouldBe(File.ReadAllText(Path.Combine(RepositoryRoot(), "VERSION")).Trim());
         AppVersion.Of(typeof(string)).ShouldNotContain("+");
+        AppVersion.Of(Unstamped()).ShouldBe("0.0.0");
         Should.Throw<ArgumentNullException>(() => AppVersion.Of(null!));
+    }
+
+    /// <summary>A type in an assembly built at run time, which carries no version at all.</summary>
+    private static Type Unstamped()
+    {
+        var assembly = System.Reflection.Emit.AssemblyBuilder.DefineDynamicAssembly(
+            new System.Reflection.AssemblyName("Unstamped"), System.Reflection.Emit.AssemblyBuilderAccess.Run);
+        return assembly.DefineDynamicModule("Unstamped").DefineType("Nothing").CreateType();
     }
 
     private static string RepositoryRoot()

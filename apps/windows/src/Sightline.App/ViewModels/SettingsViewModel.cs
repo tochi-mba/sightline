@@ -159,6 +159,12 @@ public sealed partial class SettingsViewModel : ObservableObject, IDisposable
     /// <inheritdoc cref="Preferences.SentrySnapshots"/>
     public bool SentrySnapshots { get => Current.SentrySnapshots; set => Save(p => p with { SentrySnapshots = value }); }
 
+    /// <inheritdoc cref="Preferences.CheckForUpdates"/>
+    public bool CheckForUpdates { get => Current.CheckForUpdates; set => Save(p => p with { CheckForUpdates = value }); }
+
+    /// <summary>Newer versions of Sightline.</summary>
+    public UpdatesViewModel Updates => shell.Updates;
+
     /// <inheritdoc cref="Preferences.CloseToTray"/>
     public bool CloseToTray { get => Current.CloseToTray; set => Save(p => p with { CloseToTray = value }); }
 

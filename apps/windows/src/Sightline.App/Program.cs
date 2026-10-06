@@ -1,5 +1,6 @@
 using Avalonia;
-using Sightline.App.Services;
+using Sightline.Platform.Windows.Install;
+using Velopack;
 
 namespace Sightline.App;
 
@@ -9,7 +10,16 @@ internal static class Program
     [STAThread]
     public static void Main(string[] args)
     {
-        using var instance = new SingleInstance("REXTechnologies.Sightline");
+        // First, before anything else: when the installer runs this build to install, update or remove it,
+        // the hook does its one job and the process ends here. Wiring only; the jobs are InstallLifecycle's.
+        var lifecycle = InstallLifecycle.ForThisInstall();
+        VelopackApp.Build()
+            .OnAfterInstallFastCallback(_ => lifecycle.AfterInstall())
+            .OnAfterUpdateFastCallback(_ => lifecycle.AfterUpdate())
+            .OnBeforeUninstallFastCallback(_ => lifecycle.BeforeUninstall())
+            .Run();
+
+        using var instance = new SingleInstance();
         if (!instance.IsFirst)
         {
             // Already running, perhaps only in the tray: show that one instead of starting a second.

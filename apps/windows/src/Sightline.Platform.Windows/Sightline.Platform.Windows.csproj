@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Velopack" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../Sightline.Core/Sightline.Core.csproj" />
   </ItemGroup>
 

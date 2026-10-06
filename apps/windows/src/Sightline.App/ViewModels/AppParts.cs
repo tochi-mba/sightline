@@ -5,6 +5,7 @@ using Sightline.Core.Connectivity;
 using Sightline.Core.Sentry;
 using Sightline.Core.Settings;
 using Sightline.Core.Updates;
+using Sightline.Platform.Windows.Install;
 
 namespace Sightline.App.ViewModels;
 
@@ -31,6 +32,7 @@ public interface IDesktop
 /// <param name="Version">This build's version.</param>
 /// <param name="SnapshotFolder">Where snapshots of the live picture go.</param>
 /// <param name="Notes">What's new in each version; the curated notes when null.</param>
+/// <param name="Updates">Where newer versions come from; none, as for a build run from source, when null.</param>
 public sealed record AppParts(
     CameraController Controller,
     CameraChoice Choice,
@@ -43,4 +45,5 @@ public sealed record AppParts(
     Action<Action> Post,
     string Version,
     string SnapshotFolder,
-    IReadOnlyList<WhatsNewEntry>? Notes = null);
+    IReadOnlyList<WhatsNewEntry>? Notes = null,
+    IUpdateSource? Updates = null);

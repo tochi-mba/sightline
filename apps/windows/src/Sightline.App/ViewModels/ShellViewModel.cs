@@ -44,6 +44,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         Live = new LiveViewModel(parts);
         Library = new LibraryViewModel(parts);
         Sentry = new SentryViewModel(parts);
+        Updates = new UpdatesViewModel(parts);
         Settings = new SettingsViewModel(parts, this);
 
         var preferences = parts.Preferences.Current;
@@ -75,6 +76,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
 
     /// <summary>The camera's settings and the app's.</summary>
     public SettingsViewModel Settings { get; }
+
+    /// <summary>Newer versions of Sightline.</summary>
+    public UpdatesViewModel Updates { get; }
 
     /// <summary>This build's version.</summary>
     public string Version => parts.Version;
@@ -145,6 +149,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
     public void Start()
     {
         var preferences = parts.Preferences.Current;
+        if (preferences.CheckForUpdates && Updates.CheckCommand.CanExecute(null))
+        {
+            _ = Updates.CheckCommand.ExecuteAsync(null);
+        }
+
         if (!preferences.AutoConnect || preferences.LastAdapter is not { } adapter || preferences.LastCamera is not { } ssid)
         {
             return;
@@ -202,6 +211,7 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
             OnPropertyChanged(nameof(TrayText));
             OnPropertyChanged(nameof(SentryAction));
             OnPropertyChanged(nameof(KeepsRunningWhenClosed));
+            HoldUpdates();
         }
     }
 
@@ -242,5 +252,9 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         Library.Apply(state);
         Sentry.Apply(state);
         Settings.Apply(state);
+        HoldUpdates();
     }
+
+    /// <summary>An update's restart waits while the camera records or Sentry watches.</summary>
+    private void HoldUpdates() => Updates.Hold(Camera.IsRecording || Sentry.Armed);
 }

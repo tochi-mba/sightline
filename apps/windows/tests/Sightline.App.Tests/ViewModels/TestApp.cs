@@ -79,7 +79,14 @@ internal sealed class TestApp : IAsyncDisposable
 
     public RecordedDesktop Desktop { get; } = new();
 
-    public AppParts Parts { get; }
+    public AppParts Parts { get; private set; }
+
+    /// <summary>These parts with <paramref name="updates"/> as where newer versions come from.</summary>
+    public TestApp WithUpdates(Sightline.Platform.Windows.Install.IUpdateSource updates)
+    {
+        Parts = Parts with { Updates = updates };
+        return this;
+    }
 
     /// <summary>How many actions were posted to the window's thread.</summary>
     public int Posted => Volatile.Read(ref posted);

@@ -34,7 +34,7 @@
       <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto" Margin="28,20,28,18">
 
         <!-- The header: the product, the camera's connection in a word, and leaving it. -->
-        <Grid ColumnDefinitions="*,Auto,Auto" Margin="0,0,0,18">
+        <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="0,0,0,18">
           <StackPanel Spacing="2">
             <TextBlock Classes="eyebrow signal" Text="REX TECHNOLOGIES" />
             <TextBlock Text="Sightline" FontSize="24" FontWeight="Bold" />
@@ -45,6 +45,9 @@
           </Border>
           <Button Grid.Column="2" Margin="12,0,0,0" VerticalAlignment="Center" Content="Disconnect"
                   Command="{Binding Connect.DisconnectCommand}" IsVisible="{Binding !ShowsConnect}" />
+          <Button Grid.Column="3" Name="UpdateReady" Margin="12,0,0,0" VerticalAlignment="Center" Classes="primary"
+                  Content="Update ready" Command="{Binding GoCommand}" CommandParameter="{x:Static vm:Page.Settings}"
+                  IsVisible="{Binding Updates.Ready, Converter={x:Static ObjectConverters.IsNotNull}}" />
         </Grid>
 
         <Panel Grid.Row="1">
