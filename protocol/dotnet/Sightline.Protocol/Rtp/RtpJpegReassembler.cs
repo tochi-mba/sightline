@@ -120,7 +120,8 @@ public sealed class RtpJpegReassembler
             return null;
         }
 
-        var finished = new CameraFrame(WithoutPadding(picture), timestamp, width, height);
+        var bytes = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(picture);
+        var finished = new CameraFrame(bytes[..JpegPadding.End(bytes)].ToArray(), timestamp, width, height);
         picture.Clear();
         building = false;
         return finished;
@@ -196,23 +197,6 @@ public sealed class RtpJpegReassembler
 
         start = at;
         return start <= end;
-    }
-
-    /// <summary>
-    /// The picture without the zeros that follow its end-of-image marker. Zeros with no marker before them
-    /// are kept: they could be the picture's own, and a picture with no end is judged on its own.
-    /// </summary>
-    private static byte[] WithoutPadding(List<byte> picture)
-    {
-        var end = picture.Count;
-        while (end > 0 && picture[end - 1] == 0)
-        {
-            end--;
-        }
-
-        return end >= 2 && picture[end - 2] == 0xFF && picture[end - 1] == 0xD9
-            ? [.. picture.GetRange(0, end)]
-            : [.. picture];
     }
 
     /// <summary>Lets go of any picture being put together, counting it as dropped when asked to.</summary>

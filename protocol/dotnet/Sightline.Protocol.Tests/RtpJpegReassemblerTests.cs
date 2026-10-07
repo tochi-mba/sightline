@@ -71,6 +71,8 @@ public sealed class RtpJpegReassemblerTests
         new RtpJpegReassembler().Push(new Rtp(truncated).Build())!.Value.Jpeg.ShouldBe(truncated);
         new RtpJpegReassembler().Push(new Rtp([0, 0]).Build())!.Value.Jpeg.ShouldBe(new byte[] { 0, 0 });
         new RtpJpegReassembler().Push(new Rtp([0xD9, 0]).Build())!.Value.Jpeg.ShouldBe(new byte[] { 0xD9, 0 });
+        byte[] notAnEnd = [0xFF, 0xD8, 0xFF, 0xE0, 0xFF, 0x5A, 0x00];
+        new RtpJpegReassembler().Push(new Rtp(notAnEnd).Build())!.Value.Jpeg.ShouldBe(notAnEnd);
     }
 
     [Fact]
