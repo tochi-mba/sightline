@@ -1,6 +1,7 @@
 package com.rextechnologies.sightline.protocol.rtp
 
 import com.rextechnologies.sightline.protocol.ByteQueue
+import com.rextechnologies.sightline.protocol.JpegPadding
 import com.rextechnologies.sightline.protocol.readInt32BigEndian
 import com.rextechnologies.sightline.protocol.readUInt16BigEndian
 import com.rextechnologies.sightline.protocol.unsignedAt
@@ -107,24 +108,16 @@ class RtpJpegReassembler {
             return null
         }
 
-        val finished = CameraFrame(withoutPadding(picture.toByteArray()), timestamp.toUInt(), width, height)
+        val finished =
+            CameraFrame(
+                picture.array.copyOf(JpegPadding.end(picture.array, picture.size)),
+                timestamp.toUInt(),
+                width,
+                height,
+            )
         picture.clear()
         building = false
         return finished
-    }
-
-    /**
-     * The picture without the zeros that follow its end-of-image marker. Zeros with no marker before them
-     * are kept: they could be the picture's own, and a picture with no end is judged on its own.
-     */
-    private fun withoutPadding(picture: ByteArray): ByteArray {
-        var end = picture.size
-        while (end > 0 && picture[end - 1].toInt() == 0) {
-            end--
-        }
-
-        val ended = end >= 2 && picture.unsignedAt(end - 2) == 0xFF && picture.unsignedAt(end - 1) == 0xD9
-        return if (ended) picture.copyOf(end) else picture
     }
 
     /** Lets go of any picture being put together, counting it as dropped when asked to. */
