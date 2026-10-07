@@ -368,6 +368,7 @@ private fun taskWords(task: Task): String = when (task) {
     Task.ReadingCard -> "Reading the card"
     Task.Copying -> "Copying from the card"
     Task.Deleting -> "Deleting from the card"
+    Task.Playing -> "Playing a clip from the card"
 }
 
 /**

@@ -152,6 +152,7 @@ enum class Task {
     ReadingCard,
     Copying,
     Deleting,
+    Playing,
 }
 
 /**

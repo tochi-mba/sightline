@@ -9,6 +9,9 @@ import com.rextechnologies.sightline.core.link.CameraLink
 import com.rextechnologies.sightline.core.link.CameraLinkException
 import com.rextechnologies.sightline.core.link.CameraLinkLease
 import com.rextechnologies.sightline.core.link.CameraNetwork
+import com.rextechnologies.sightline.core.playback.CardClip
+import com.rextechnologies.sightline.core.playback.ClipCache
+import com.rextechnologies.sightline.core.playback.ClipTee
 import com.rextechnologies.sightline.core.session.CameraSession
 import com.rextechnologies.sightline.core.session.CameraSessionTiming
 import com.rextechnologies.sightline.core.session.CameraTimeoutException
@@ -18,6 +21,7 @@ import com.rextechnologies.sightline.protocol.gpsock.GpSockConnection
 import com.rextechnologies.sightline.protocol.gpsock.GpSockRefusedException
 import com.rextechnologies.sightline.protocol.gpsock.MenuIds
 import com.rextechnologies.sightline.protocol.gpsock.MenuSettingKind
+import com.rextechnologies.sightline.protocol.media.AviFormatException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -336,6 +340,36 @@ class CameraController(
             }
         }
         notice(if (files.size == 1) "Deleted from the card." else "${files.size} files deleted from the card.")
+    }
+
+    /**
+     * Plays [file], a video on the card: it is fetched into [cache] and read as it arrives, so a player can start
+     * before all of it is here. One kept from before is read from the cache, and the camera is not asked for anything,
+     * connected or not.
+     *
+     * @return The clip as it arrives; null when it must be fetched and the camera is not connected or is busy.
+     */
+    fun play(file: CameraFile, cache: ClipCache): CardClip? {
+        cache.open(file, scope)?.let { return it }
+
+        val clip = CardClip(file)
+        val job = perform(Task.Playing) { connected -> fetch(connected, clip, cache) }
+        if (job == null) {
+            clip.close()
+            return null
+        }
+
+        clip.runs(job)
+        // The person letting it go, a connection that ended before the fetch began and one lost under it all end the
+        // job without the fetch saying how. Every other end has said so already, and the first word stands.
+        job.invokeOnCompletion {
+            if (clip.isStopped) {
+                clip.stopped()
+            } else {
+                clip.failed("The camera was lost before the whole clip arrived.")
+            }
+        }
+        return clip
     }
 
     /** Clears the notice numbered [id], unless a newer one has replaced it. */
@@ -657,6 +691,53 @@ class CameraController(
             }
 
             updateTransfers(mapOf(file to Transfer.Failed(reason)))
+        }
+    }
+
+    /**
+     * Fetches a clip into the cache while it is read. A refusal, storage that cannot keep it and a file that is no
+     * clip each end it with a reason its player shows, and none of those says anything about the camera; the camera's
+     * own failures go on to be handled as for any operation.
+     */
+    private suspend fun fetch(connected: Connected, clip: CardClip, cache: ClipCache) {
+        try {
+            refuseWhileRecording("Stop recording to play a clip from the card.")
+            browse(connected) { fetchInto(connected, clip, cache) }
+        } catch (failure: Exception) {
+            rethrowCancellation(failure)
+            clip.failed(
+                when (failure) {
+                    is GpSockRefusedException -> "The camera said no: ${GpSockRefusedException.explain(failure.code)}."
+                    is Refusal -> failure.message
+                    is SaveFailure -> "The phone could not keep the clip: ${failure.message}"
+                    is AviFormatException -> "This file cannot be played. ${failure.message}"
+                    // The camera stopped sending: its player hears so, and below it is treated as lost.
+                    is CameraTimeoutException -> failure.message
+                    // The camera stopped answering, or went: it is treated as lost, which its player hears as the job ends.
+                    else -> throw failure
+                },
+            )
+            if (failure is CameraTimeoutException) {
+                throw failure
+            }
+        }
+    }
+
+    private suspend fun fetchInto(connected: Connected, clip: CardClip, cache: ClipCache) {
+        val pending = saving { cache.start(clip.file) }
+        clip.arriving(pending.path)
+        try {
+            withStallDetector { progressed ->
+                connected.session.control.download(clip.file.index, ClipTee(pending.output, clip.reader)) {
+                    progressed()
+                }
+            }
+            clip.reader.finish()
+            clip.kept(saving { pending.keep() })
+        } catch (failure: Exception) {
+            // Tidying up, cancelled or not; a failure here must not hide why the fetch failed.
+            runCatching { pending.discard() }
+            throw failure
         }
     }
 
