@@ -168,12 +168,27 @@ What a client does, then:
 `RestartStreaming` followed by an RTSP session in **browse** mode also sends a picture, at 640×360
 and about two frames a second.
 
-### Playing a clip from the card (2026-10-06)
+### Playing a clip from the card (2026-10-06, 2026-10-07)
 
 `Playback_Start` (0x0300) with the file's index as two little-endian bytes, sent after
 `SetMode(browse)`, `RestartStreaming` and a UDP RTSP session, as the vendor app does it, **made the
 camera drop off Wi-Fi**: the control connection was aborted and its access point disappeared. It is
 not used, and is not sent to a camera again until it is understood.
+
+So the apps play a clip by downloading it with `Playback_GetRawData` and reading it as it arrives.
+What a clip from the card holds, read from the reference camera's own (2026-10-07):
+
+- An AVI: `RIFF`/`AVI `, a `JUNK` chunk, `LIST hdrl` (`avih`, a `strl` for the pictures and one for
+  the sound, `odml`), `LIST movi`, then the indexes (`ix00`, `ix01`) and another `JUNK`.
+- Every picture is a whole JPEG in a `00dc` chunk, padded after its end-of-image marker as the
+  stream's pictures are. The sound is 16 kHz mono 16-bit PCM in `01wb` chunks of 16,376 bytes, half a
+  second each, every one written after the 10 to 13 pictures taken during it.
+- The header says 30 pictures a second, and the index fills that many places: one clip held 122
+  pictures in 149 places, about every fifth repeated, so the camera takes about 25 a second. A clip
+  still arriving has no index yet, so the apps time its pictures by the runs of sound around them.
+- It comes off the card at 700 to 875 KB a second, a third to a half of the speed a 1080p clip plays
+  at, so a player waits until the rest will arrive before it is needed (ACCEPTANCE V1 to V4). Letting a
+  download go part-way is safe: the camera abandons it at the next request, as for any download.
 
 ### What the record resolutions really record (2026-10-06)
 
@@ -187,8 +202,8 @@ Each frame of a clip was read for the size its own JPEG header declares:
 | 720P 1280X720 (4) | 1280×720 MJPEG, about 32 KB a frame | 30 fps |
 
 So "4K" and "2.7K" are labels: on this camera they record what 1080FHD records. Clips are AVI with
-16 kHz mono PCM sound, about 10 Mbit/s at 1080p, and download at about 875 KB a second. Status
-byte 4 follows the setting (0, 1, 2 and 4 read back as set).
+16 kHz mono PCM sound, 10 to 19 Mbit/s at 1080p by what the picture holds, and download at 700 to
+875 KB a second. Status byte 4 follows the setting (0, 1, 2 and 4 read back as set).
 
 ## Open questions
 
