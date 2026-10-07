@@ -25,6 +25,10 @@ public readonly record struct CameraFrame(byte[] Jpeg, uint RtpTimestamp, int Wi
 /// document in the payload. So fragments are simply put together, and none of that reconstruction is
 /// needed or wanted.
 /// </para>
+/// <para>
+/// <b>Each picture is padded.</b> The camera follows a picture's end-of-image marker with up to seven
+/// zero bytes, to a multiple of eight. Those are not the picture, and are let go of.
+/// </para>
 /// </remarks>
 public sealed class RtpJpegReassembler
 {
@@ -116,7 +120,7 @@ public sealed class RtpJpegReassembler
             return null;
         }
 
-        var finished = new CameraFrame([.. picture], timestamp, width, height);
+        var finished = new CameraFrame(WithoutPadding(picture), timestamp, width, height);
         picture.Clear();
         building = false;
         return finished;
@@ -192,6 +196,23 @@ public sealed class RtpJpegReassembler
 
         start = at;
         return start <= end;
+    }
+
+    /// <summary>
+    /// The picture without the zeros that follow its end-of-image marker. Zeros with no marker before them
+    /// are kept: they could be the picture's own, and a picture with no end is judged on its own.
+    /// </summary>
+    private static byte[] WithoutPadding(List<byte> picture)
+    {
+        var end = picture.Count;
+        while (end > 0 && picture[end - 1] == 0)
+        {
+            end--;
+        }
+
+        return end >= 2 && picture[end - 2] == 0xFF && picture[end - 1] == 0xD9
+            ? [.. picture.GetRange(0, end)]
+            : [.. picture];
     }
 
     /// <summary>Lets go of any picture being put together, counting it as dropped when asked to.</summary>

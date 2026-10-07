@@ -51,6 +51,29 @@ public sealed class RtpJpegReassemblerTests
     }
 
     [Fact]
+    public void The_zeros_the_camera_pads_a_picture_with_after_its_end_are_not_part_of_it()
+    {
+        // Measured on 2026-10-06: up to seven zeros after FF D9, to a multiple of eight bytes. Taken as part of
+        // the picture, they made most pictures fail the whole-JPEG check, and the live view ran at two a second.
+        var jpeg = FakeJpeg(8829);
+
+        var frame = new RtpJpegReassembler().Push(new Rtp([.. jpeg, 0, 0, 0]).Build());
+
+        frame!.Value.Jpeg.ShouldBe(jpeg);
+        RtpJpegReassembler.LooksLikeJpeg(frame.Value.Jpeg).ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Zeros_with_no_end_of_image_before_them_are_left_alone()
+    {
+        byte[] truncated = [0xFF, 0xD8, 0xFF, 0xE0, 0x5A, 0x00, 0x00];
+
+        new RtpJpegReassembler().Push(new Rtp(truncated).Build())!.Value.Jpeg.ShouldBe(truncated);
+        new RtpJpegReassembler().Push(new Rtp([0, 0]).Build())!.Value.Jpeg.ShouldBe(new byte[] { 0, 0 });
+        new RtpJpegReassembler().Push(new Rtp([0xD9, 0]).Build())!.Value.Jpeg.ShouldBe(new byte[] { 0xD9, 0 });
+    }
+
+    [Fact]
     public void Pictures_one_after_another_each_come_out()
     {
         var first = FakeJpeg(900, 0x11);
