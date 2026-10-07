@@ -90,7 +90,7 @@ come from the camera's own menu, with each value read back from the camera.
 | `./gradlew :android:app:check` | Lints and tests the app under Robolectric, at its floors. |
 | `./gradlew :android:app:assembleDebug` | Builds the debug APK. |
 
-Three things about Robolectric cost hours to find, and shape how the screens are written and tested:
+Five things about Robolectric cost hours to find, and shape how the screens are written and tested:
 
 - **A text field inside a `Dialog` never lets Compose go idle**, focused or not, so any test that opens
   one times out. Text is edited in place, under its row, instead; that is also kinder to a phone's
@@ -99,6 +99,14 @@ Three things about Robolectric cost hours to find, and shape how the screens are
   only drawn, never laid out, a test draws the activity's decor view into a bitmap itself.
 - **The protocol fixtures' frames and thumbnails only look like JPEGs to the protocol.** The phone's own
   decoder refuses them, so a test that needs a picture drawn uses `TestGraph.picture()`, a real JPEG.
+- **The Compose test clock moves on by itself while anything on screen keeps changing**, and Robolectric's
+  clock moves with it. A clip that is playing changes the screen every step, so the first wait in a test
+  plays it to its end. A test that needs a clip still playing gives the graph a clock that stands still.
+- **The tests run on whatever system builds them, and the systems disagree about open files.** Windows
+  will not rename or delete a file another handle holds open; Android and Linux will. So nothing keeps a
+  clip's file open across the moment its fetch gives it its real name: the player opens it for each read.
+  And a cache test that needs a file nothing can delete uses a non-empty folder of that name, which no
+  system deletes.
 
 ## Not yet proven on a phone
 
