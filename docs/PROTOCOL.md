@@ -74,6 +74,7 @@ agree past the first few fields. What is pinned down:
 | 0 | Mode (0 record, 1 capture, 2 browse, 3 menu) | Reported 0 while in record mode |
 | 1 | bit 0 busy (recording or playing), bit 1 audio on | Audio was on |
 | 3 | External power | Was 1 on USB power |
+| 4 | Record resolution: the Record Resolution menu value | Read back 0, 1, 2 and 4 as each was set |
 
 Byte 2 reads `0x80` on external power, which is not a percentage, so **battery is not decoded**.
 Free space lies beyond the 16 bytes in the documented layout, so **free space is not decoded**.
@@ -87,7 +88,7 @@ The app reads its settings from here rather than from a table, so a camera with 
 still shows the right options. The reference document is
 [`protocol/golden/menu/reference-camera.xml`](../protocol/golden/menu/reference-camera.xml).
 
-## RTSP, the picture (TCP 8080)
+## RTSP, the picture (TCP 8080, pictures over UDP)
 
 - `OPTIONS` answers `Public: DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE`. There is no
   `GET_PARAMETER` or `SET_PARAMETER`: RTSP is not a control plane here.
@@ -101,73 +102,93 @@ still shows the right options. The reference document is
 - **A DESCRIBE reply has a body** (`Content-Length`). It must be read in full, or every later read
   on the connection is misaligned.
 - Session ids are one byte repeated fifteen times and change per session (`040404…`, `DEDEDE…`,
-  `222222…`).
+  `222222…`, `F0F0F0…`).
+- TCP 8082 answers nothing: not HTTP, not RTSP, not a `GPSOCKET` frame.
 
 ### What arrives after PLAY
 
-- **Bare RTP, with no RTSP interleaved framing**, even though the camera answers a TCP transport
-  request with `interleaved=0-1`. The first byte after the PLAY reply is `0x80`, never `0x24`.
-  A client expecting `$`-framing finds `$` bytes inside the JPEG data and produces nonsense.
-- Packets are split on the RTP header anchored to the stream's fixed SSRC (`0x22222222`):
-  version 2, payload type 26, then sequence, timestamp and that SSRC.
 - **Each frame carries a complete JFIF header in its payload**, so RFC 2435's reconstruction of
-  quantisation and Huffman tables is unnecessary: fragments are concatenated from fragment
-  offset 0, and the RTP marker bit ends a frame.
-- Measured: **640×360, about 12.2 frames a second, about 11 KB a frame, about 1.1 Mbit/s**,
-  with no sequence gaps over TCP across 218 packets.
+  quantisation and Huffman tables is unnecessary: fragments are put together from fragment offset 0,
+  and the RTP marker bit ends a frame. The stream's SSRC is fixed (`0x22222222`), payload type 26.
+- A frame is about 8.8 KB in seven packets: six of 1,420 bytes of picture and a last one of 300 or so,
+  each with the JPEG header's type 1, Q 1 and 640×360. Offsets, timestamps and markers were exactly as
+  RFC 2435 says across 168 packets (2026-10-07).
+- **Each picture is padded after its end-of-image marker** with up to seven zero bytes, to a multiple of
+  eight. Of 24 pictures, 21 ended in zeros; a check for `FF D9` at the very end refuses them.
+- Measured: **640×360, about 12 frames a second, about 11 KB a frame, about 115 RTP packets a
+  second**.
 - The camera burns a date and time into the picture, and its clock was about two years wrong.
 
-### One stream per power-on (measured 2026-10-06)
+### The stream goes over UDP (measured 2026-10-06)
 
-The RTSP server answers **the first TCP connection it accepts after the camera is switched on, and
-no other**. Every rule below follows from that, and each was observed on the reference camera
-across four power cycles:
+The transport the stream is asked for decides whether the camera survives it.
 
-- **A second connection is never answered.** It connects, and its `DESCRIBE` gets no reply, for as
-  long as the camera stays on. Closing the first connection first does not help, whether it was
-  closed with a `TEARDOWN`, without one, or by the camera itself.
-- **`TEARDOWN` answers `501 Not Implemented`**, although `OPTIONS` lists it, and the stream keeps
-  coming. **`PAUSE` answers `200 OK` and the stream keeps coming.** Neither can stop the picture.
-- **The one connection can be used again.** A fresh `DESCRIBE`, `SETUP` and `PLAY` on it works
-  after an earlier `PLAY` there. The reply arrives inside the RTP still flowing on the connection.
-- **`SetMode(browse)` makes the camera hang up the stream connection at once**, and the card can
-  only be listed in browse mode: in record mode `PlaybackGetFileList` is refused with a mode
-  error, and asking for a thumbnail made the camera drop its Wi-Fi. `PlaybackGetFileCount` works
-  in any mode. So **looking at the card ends the live picture until the camera is switched off
-  and on**.
-- Reading the menu, `RestartStreaming`, a new control session, waiting for the mode to settle, and
-  the camera's Wi-Fi dropping and coming back do not bring the stream server back. Only the camera
-  restarting does; it twice restarted by itself while requests to the stuck server were waiting,
-  which is another reason not to keep asking.
-- TCP 8082 answers nothing: not HTTP, not RTSP, not a `GPSOCKET` frame.
+**Over the RTSP connection** (`RTP/AVP/TCP;unicast;interleaved=0-1`) the camera:
 
-### Once the stream ends, the camera's buttons stop working (measured 2026-10-06)
+- sends **bare RTP with no interleaved framing**, although it answers `interleaved=0-1`: the first
+  byte after the PLAY reply is `0x80`, never `0x24`, and a client expecting `$`-framing finds `$`
+  bytes inside the JPEG data;
+- answers **only the first such connection after it is switched on**: a second one connects and its
+  `DESCRIBE` is never answered, however the first ended;
+- answers `TEARDOWN` with `501 Not Implemented`, though `OPTIONS` lists it, and ignores `PAUSE`;
+- and once that stream ends, **its own buttons and screen freeze** on the Wi-Fi screen until its
+  battery is taken out and put back. `PowerOff` is acknowledged and ignored while frozen.
 
-After its stream has run, **the camera's own buttons and screen stop responding**, stuck on the
-Wi-Fi name and password screen, until its battery is taken out and put back. Its network side
-carries on answering: status, mode changes, the card and thumbnails all still work.
-
-| Session | Live picture | Buttons after |
+| Session over TCP | Live picture | Buttons after |
 | --- | --- | --- |
-| List the card | No | Working |
-| Thumbnails of seven files, photos and videos | No | Working |
-| Thumbnail of a clip under a second long | No | Working |
-| Download a photo and a clip, delete the clip | No | Working |
+| List the card, thumbnails, download, delete | No | Working |
 | Stream, then browse the card while it flows | Yes | **Frozen** |
 | Stream, close our connection, browse, ask for a second stream | Yes | **Frozen** |
 | Stream, close our connection, read the status, disconnect | Yes | **Frozen** |
 
-- `PowerOff` (0x0003) is acknowledged by a frozen camera and ignored: it does not switch itself off.
-- Ending the stream by leaving the camera's Wi-Fi while it still flows has not been tried.
-- The same fault is the likeliest reason a second stream is never answered: the stream task does
-  not survive its first stream ending, and the buttons wait on it.
-- The camera's clock goes back to 1 January 2024 whenever it loses power.
+**Over UDP** (`RTP/AVP;unicast;client_port=P-P+1`) none of that happens. The camera answers
+`server_port=59728-59729` (for example) and sends each RTP packet as one datagram to `P`:
 
-What a client has to do, then: start the stream only when the person asks for the picture, saying
-first what it costs; open it once per camera session and never close it while connected; read it
-continuously, so the camera is never left blocked writing; share it between everything that wants a
-picture; and once it has run, say that the camera needs its battery taken out and put back, both
-to show its picture again and to answer its own buttons.
+| Session over UDP | What happened | Buttons after |
+| --- | --- | --- |
+| Three streams in a row, each on a new RTSP connection | Each answered `200` to DESCRIBE, SETUP and PLAY, and sent about 240 packets in two seconds | Working |
+| Browse mode in the middle of a stream | The camera closed the RTSP connection and stopped sending; the file list and a thumbnail worked | Working |
+| A new stream after browsing | Answered, about 240 packets in two seconds | Working |
+| Close our RTSP connection mid-stream | Eight stragglers within three seconds, then nothing | Working |
+
+What a client does, then:
+
+- Ask for UDP, from a socket bound to its own address on the camera's network.
+- Let the system choose the port. The camera takes any port it is told, odd ones too (63721 was
+  answered), and a fixed one can fall in a range Windows reserves for itself (50000–50059 and
+  50166–50365 on the PC this was measured on), which refuses the bind outright.
+- Send one datagram from that port to `server_port` once PLAY is answered. Windows Firewall drops
+  inbound UDP it did not ask for on a public network, and lets the stream in as the reply to this.
+- Close the RTSP connection to stop the stream; there is no other way, and none is needed.
+- Nothing needs keeping alive: a stream ran three minutes with no request and no RTCP, at a steady
+  twelve pictures a second (2026-10-07). The datagrams come from `server_port` itself.
+- Start the picture whenever it is wanted, as often as it is wanted. Browsing the card ends it, and
+  it can be started again once the camera is back in record or capture mode.
+
+`RestartStreaming` followed by an RTSP session in **browse** mode also sends a picture, at 640×360
+and about two frames a second.
+
+### Playing a clip from the card (2026-10-06)
+
+`Playback_Start` (0x0300) with the file's index as two little-endian bytes, sent after
+`SetMode(browse)`, `RestartStreaming` and a UDP RTSP session, as the vendor app does it, **made the
+camera drop off Wi-Fi**: the control connection was aborted and its access point disappeared. It is
+not used, and is not sent to a camera again until it is understood.
+
+### What the record resolutions really record (2026-10-06)
+
+Each frame of a clip was read for the size its own JPEG header declares:
+
+| Menu choice (value) | Frames recorded | Rate |
+| --- | --- | --- |
+| 4K (0) | 1920×1080 MJPEG, about 60 KB a frame | 30 fps |
+| 2.7K (1) | 1920×1080 MJPEG, about 60 KB a frame | 30 fps |
+| 1080FHD 1920X1080 (2) | 1920×1080 MJPEG, about 60 KB a frame | 30 fps |
+| 720P 1280X720 (4) | 1280×720 MJPEG, about 32 KB a frame | 30 fps |
+
+So "4K" and "2.7K" are labels: on this camera they record what 1080FHD records. Clips are AVI with
+16 kHz mono PCM sound, about 10 Mbit/s at 1080p, and download at about 875 KB a second. Status
+byte 4 follows the setting (0, 1, 2 and 4 read back as set).
 
 ## Open questions
 
@@ -176,4 +197,6 @@ to show its picture again and to answer its own buttons.
   commands are not guessed at on a real camera.
 - Whether `RestartStreaming` is ever needed on this firmware: the stream was received without it.
 - What TCP 8082 is.
-- The meaning of status bytes 2 and 4–15.
+- The meaning of status bytes 2 and 5–15.
+- Whether a UDP stream needs keeping alive past three minutes, the longest measured so far.
+- How the camera plays a clip from its card without dropping off Wi-Fi.

@@ -30,14 +30,17 @@ phone and a WireGuard VPN.
 | C6 | `RestartStreaming` is acknowledged | 2026-10-02 | Pass |
 | C7 | `CapturePicture` takes a photo onto the card | 2026-10-06 | Pass, the card went from 4 files to 5 |
 | C8 | `RecordToggle` starts and stops recording | 2026-10-06 | Pass, status read recording, then not; the card went to 6 files |
-| C9 | `MenuSetParameter` changes a setting, read back | | |
+| C9 | `MenuSetParameter` changes a setting, read back | 2026-10-06 | Pass: Record Resolution set to 2.7K, 1080FHD, 720P and back to 4K, each read back as set, and status byte 4 followed it |
 | C10 | List, download and delete a file | 2026-10-06 | Pass: 8 files listed; a 215 KB photo (a whole JPEG, padded with 4 zero bytes) and a 1.3 MB clip (RIFF/AVI) downloaded at about 750 to 870 KB/s; the clip, made by an earlier test, deleted; 7 files left |
 | C11 | Thumbnails of every file, photos and videos, in browse mode | 2026-10-06 | Pass: 2 to 6 KB each, 70 to 320 ms each |
 | C12 | The camera's buttons work after a session with no live picture | 2026-10-06 | Pass, after listing, thumbnails, and downloading and deleting |
-| C13 | The camera's buttons work after its live picture has run | 2026-10-06 | **No**: frozen on the Wi-Fi screen until the battery is taken out, however the stream ended. See PROTOCOL.md |
+| C13 | The camera's buttons work after its live picture has run | 2026-10-06 | Over UDP, **yes**, after every stream (P13 to P15). Over TCP, **no**: frozen on the Wi-Fi screen until the battery is taken out, however the stream ended. See PROTOCOL.md |
 | C14 | `PowerOff` switches off a frozen camera | 2026-10-06 | **No**: acknowledged, and ignored |
+| C15 | What each record resolution really records, read from each frame's own JPEG header | 2026-10-06 | "4K" and "2.7K" record 1920×1080 MJPEG at 30 fps, the same as "1080FHD"; "720P" records 1280×720. Every clip already on the card was 1920×1080 too |
+| C16 | A clip recorded at the "4K" setting downloads whole | 2026-10-06 | Pass: 5 seconds, 6.4 MB, an AVI of 1920×1080 MJPEG at 30 fps with 16 kHz mono PCM, in 7.2 seconds |
+| C17 | `Playback_Start` plays a clip from the card | 2026-10-06 | **No**: sent after browse mode, `RestartStreaming` and a UDP RTSP session, it made the camera drop off Wi-Fi |
 
-## Picture (RTSP, TCP 8080)
+## Picture (RTSP on TCP 8080, pictures over UDP)
 
 | # | Check | Date | Result |
 | --- | --- | --- | --- |
@@ -46,13 +49,21 @@ phone and a WireGuard VPN.
 | P3 | 640×360 at about 12 frames a second | 2026-10-02 | Pass, 12.2 fps |
 | P4 | `sightline snapshot` saves a real picture through the whole stack | 2026-10-02 | Pass |
 | P5 | The Windows app's camera code shows the live picture | 2026-10-06 | Pass: the app's controller, joining on the TP-Link adapter, played 12.4 frames a second. Before that day it failed: it closed the stream and opened another, and the camera answers one stream per power-on |
-| P11 | Letting go of the picture and coming back to it keeps the one stream | 2026-10-06 | Pass: 3 seconds let go, then 13.0 frames a second on the same connection |
-| P12 | Reading the card while holding the picture says it needs the camera switched off and on | 2026-10-06 | Pass: 8 files listed, then the live view said so at once, with nothing retried |
-| P6 | A second RTSP connection is answered after the first is closed | 2026-10-06 | **No**, with or without `TEARDOWN`, and after the camera hung up the first itself |
+| P11 | Letting go of the picture and coming back to it keeps the one stream, over TCP | 2026-10-06 | Pass: 3 seconds let go, then 13.0 frames a second on the same connection. The apps no longer keep it: over UDP the stream stops when nobody watches and another starts |
+| P12 | Reading the card while holding the picture says it needs the camera switched off and on, over TCP | 2026-10-06 | Pass: 8 files listed, then the live view said so at once, with nothing retried. Over UDP the picture comes back after the card is read instead (P14) |
+| P6 | A second RTSP connection is answered after the first is closed, over TCP | 2026-10-06 | **No**, with or without `TEARDOWN`, and after the camera hung up the first itself |
 | P7 | `TEARDOWN` and `PAUSE` stop the stream | 2026-10-06 | **No**: 501 Not Implemented, and 200 OK with the stream still coming |
 | P8 | `DESCRIBE`, `SETUP`, `PLAY` again on the first connection | 2026-10-06 | Pass |
-| P9 | `SetMode(browse)` while streaming | 2026-10-06 | The camera hangs up the stream connection at once |
+| P9 | `SetMode(browse)` while streaming | 2026-10-06 | The camera hangs up the stream connection at once, over TCP and over UDP |
 | P10 | The stream starts after the whole menu and every setting are read | 2026-10-06 | Pass, on a camera that had not streamed since it was switched on |
+| P13 | Three UDP streams in a row, each on a new RTSP connection | 2026-10-06 | Pass: each answered 200 to DESCRIBE, SETUP and PLAY and sent about 240 packets in two seconds; the camera's buttons worked afterwards |
+| P14 | Browse mode in the middle of a UDP stream, then a new stream | 2026-10-06 | Pass: the camera closed the stream, the file list and a thumbnail worked, and the next stream sent about 240 packets in two seconds; buttons working |
+| P15 | Closing the RTSP connection stops a UDP stream | 2026-10-06 | Pass: eight stragglers within three seconds, then nothing |
+| P16 | The camera takes an odd client port | 2026-10-06 | Pass: port 63721, chosen by Windows, was answered with `server_port=59728-59729` |
+| P17 | The Windows app plays the picture over UDP, and again after reading the card | 2026-10-07 | Pass: the app's controller, joining on the TP-Link adapter, played 12.4 frames a second; let go and held again, 12.3; the card read while watching (5 files, 5 thumbnails), then back at 12.4. The PC's internet answered afterwards |
+| P18 | The Android app plays the picture over UDP, and again after reading the card | | |
+| P19 | A UDP stream keeps going for three minutes with no keepalive | 2026-10-07 | Pass: 854 to 870 packets in every ten seconds for 180 seconds, all from the camera's `server_port`; the SETUP reply names no session timeout |
+| P20 | Every picture of a UDP stream arrives whole | 2026-10-07 | Pass: 61 pictures in five seconds through the app's own socket and reassembler, 0 packets lost, 0 pictures dropped |
 
 ## Command line
 

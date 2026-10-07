@@ -15,8 +15,9 @@ protocol as measured on real hardware.
    when the control socket on 8081 closes. Never connect per command.
 2. **Start the stream on the control channel.** RTSP SETUP and PLAY can both succeed and deliver
    nothing until `RestartStreaming` (0x0004) has been sent.
-3. **The stream has no interleaved framing.** After PLAY the camera sends bare RTP down the TCP
-   connection. Never hand it to a stock RTSP stack and expect a picture.
+3. **The stream goes over UDP.** Ask for `RTP/AVP` to a client port. Asked for over the RTSP
+   connection, the camera answers once per power-on and freezes its own buttons when the stream ends,
+   and what it sends down the connection has no interleaved framing either.
 4. **Never take a device offline.** Camera traffic is bound to the camera's network; nothing
    changes the default route, disables mobile data, or binds a whole process.
 5. **Honesty about hardware.** No capability, figure or model is claimed until it is a dated line
