@@ -18,7 +18,6 @@ import com.rextechnologies.sightline.core.camera.CameraStatus
 import com.rextechnologies.sightline.core.camera.CaptureMode
 import com.rextechnologies.sightline.core.camera.Connection
 import com.rextechnologies.sightline.core.camera.LiveView
-import com.rextechnologies.sightline.core.camera.OFFERED_PICTURE
 import com.rextechnologies.sightline.core.camera.Problem
 import com.rextechnologies.sightline.core.camera.ProblemKind
 import com.rextechnologies.sightline.core.camera.Task
@@ -255,10 +254,6 @@ class LiveScreenTest {
         }
         test.connected()
         show()
-        settle()
-        // Never started unasked: what it costs is said, and the person asks.
-        compose.onNodeWithText(OFFERED_PICTURE).assertExists()
-        compose.onNodeWithText("SHOW THE LIVE PICTURE").performClick()
         settle(Duration.ofSeconds(3))
 
         compose.onNodeWithText("FPS", substring = true).assertExists()
@@ -279,11 +274,9 @@ class LiveScreenTest {
     @Test
     @Config(qualifiers = "w853dp-h384dp")
     fun `a phone on its side gives the picture the height, and the hud keeps to its edges`() {
-        // The reference phone turned on its side: wide, but too short for the controls under the picture.
-        test.link.stream = {
-            frames += List(10) { TestGraph.picture() }
-            closesAfterFrames = true
-        }
+        // The reference phone turned on its side: wide, but too short for the controls under the picture. The
+        // camera refuses every stream, so the picture stays stopped between its tries.
+        test.link.stream = { setupStatus = 454 }
         test.connected()
         show()
         settle()
@@ -298,13 +291,9 @@ class LiveScreenTest {
         compose.onNodeWithText("TOP SPEED").assertExists()
 
         // A picture that has stopped still says why with the HUD on.
-        compose.onNodeWithText("SHOW THE LIVE PICTURE").performClick()
-        test.until { it.live is LiveView.Unavailable }
+        test.until { it.live is LiveView.Interrupted }
         compose.waitForIdle()
-        compose.onNodeWithText(
-            "The live picture has ended. Take the camera's battery out and put it back to see it again.",
-            ignoreCase = true,
-        ).assertExists()
+        compose.onNodeWithText("The picture stopped. Starting it again.", ignoreCase = true).assertExists()
     }
 
     @Test
@@ -340,16 +329,11 @@ class LiveScreenTest {
         val connected = CameraState(connection = Connection.Connected)
 
         assertEquals("Starting the picture", pictureMessage(connected.copy(live = LiveView.Starting)))
-        assertEquals("The card is being read", pictureMessage(connected.copy(live = LiveView.Paused)))
+        assertEquals("Paused while the card is read", pictureMessage(connected.copy(live = LiveView.Paused)))
         assertEquals(
-            "The camera stopped sending its picture. Waiting for it.",
+            "The picture stopped. Starting it again.",
             pictureMessage(connected.copy(live = LiveView.Interrupted("x"))),
         )
-        assertEquals(
-            "The live picture has ended. Take the camera's battery out and put it back to see it again.",
-            pictureMessage(connected.copy(live = LiveView.Unavailable("x"))),
-        )
-        assertEquals(OFFERED_PICTURE, pictureMessage(connected.copy(live = LiveView.Offered)))
         assertEquals(null, pictureMessage(connected.copy(live = LiveView.Playing(12.0))))
         assertEquals(
             "Reconnecting to the camera, attempt 2 of 4",

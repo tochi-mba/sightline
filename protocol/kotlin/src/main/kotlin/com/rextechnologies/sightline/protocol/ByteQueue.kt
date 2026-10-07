@@ -38,9 +38,6 @@ internal class ByteQueue {
         return -1
     }
 
-    /** A copy of the bytes from [from] up to, but not including, [to]. */
-    fun copyOfRange(from: Int, to: Int): ByteArray = bytes.copyOfRange(from, to)
-
     /** A copy of everything held. */
     fun toByteArray(): ByteArray = bytes.copyOf(size)
 

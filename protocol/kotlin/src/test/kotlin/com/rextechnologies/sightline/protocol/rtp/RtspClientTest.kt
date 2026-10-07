@@ -2,7 +2,9 @@ package com.rextechnologies.sightline.protocol.rtp
 
 import com.rextechnologies.sightline.protocol.CameraTransport
 import com.rextechnologies.sightline.protocol.bytes
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertContentEquals
@@ -38,7 +40,7 @@ class RtspClientTest {
                     200,
                     "",
                     "Session" to "DEDEDEDEDEDEDEDEDEDEDEDEDEDEDE",
-                    "Transport" to "RTP/AVP/TCP;unicast;interleaved=0-1",
+                    "Transport" to REFERENCE_TRANSPORT,
                 ),
             ),
         )
@@ -48,7 +50,7 @@ class RtspClientTest {
         val describe = client.describe()
         assertContains(describe.body, "m=video 0 RTP/AVP 26")
 
-        val setup = client.setupVideo()
+        val setup = client.setupVideo(63721)
         assertTrue(setup.isSuccess)
         assertEquals("DEDEDEDEDEDEDEDEDEDEDEDEDEDEDE", client.session)
     }
@@ -64,23 +66,70 @@ class RtspClientTest {
         val client = RtspClient(transport, "192.168.100.1")
         client.connect()
 
-        client.setupVideo()
+        client.setupVideo(50100)
         client.play()
 
         assertTrue(transport.sent.any { it.contains("Session: 222222222222222222222222222222") })
     }
 
     @Test
-    fun `the setup asks for the stream over the same connection`(): Unit = runBlocking {
-        // Inbound UDP is what a firewall drops, so the TCP transport is requested first.
+    fun `the setup asks for the stream as datagrams to the port given`(): Unit = runBlocking {
+        // Over this connection instead, the camera streams once per power-on and then leaves its buttons stuck.
         val transport = ScriptedTransport(listOf(reply(200, "")))
         val client = RtspClient(transport, "192.168.100.1")
         client.connect()
 
-        client.setupVideo()
+        client.setupVideo(63721)
 
-        assertContains(transport.sent[0], "Transport: RTP/AVP/TCP")
-        assertContains(transport.sent[0], "/?action=stream/track0")
+        assertTrue(transport.sent[0].startsWith("SETUP rtsp://192.168.100.1:8080/?action=stream/track0 RTSP/1.0"))
+        assertContains(transport.sent[0], "Transport: RTP/AVP;unicast;client_port=63721-63722\r\n")
+    }
+
+    @Test
+    fun `the port the camera streams from is read from its setup reply`(): Unit = runBlocking {
+        val transport = ScriptedTransport(
+            listOf(reply(200, "", "Transport" to REFERENCE_TRANSPORT, "Session" to "F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0")),
+        )
+        val client = RtspClient(transport, "192.168.100.1")
+
+        client.setupVideo(63721)
+
+        assertEquals(59728, client.serverPort)
+        assertEquals("F0F0F0F0F0F0F0F0F0F0F0F0F0F0F0", client.session)
+    }
+
+    @Test
+    fun `a setup reply with no usable server port leaves it unknown`(): Unit = runBlocking {
+        val unusable = listOf(
+            null,
+            "RTP/AVP;unicast;client_port=63721-63722",
+            "RTP/AVP;unicast;server_port",
+            "RTP/AVP;unicast;server_port=many",
+            "RTP/AVP;unicast;server_port=0-1",
+            "RTP/AVP;unicast;server_port=70000-70001",
+            "RTP/AVP;unicast;server_port=-5",
+        )
+        for (header in unusable) {
+            val headers = if (header == null) emptyArray<Pair<String, String>>() else arrayOf("Transport" to header)
+            val client = RtspClient(ScriptedTransport(listOf(reply(200, "", *headers))), "192.168.100.1")
+
+            assertTrue(client.setupVideo(50100).isSuccess)
+
+            assertNull(client.serverPort, header)
+            assertNull(client.session, header)
+        }
+    }
+
+    @Test
+    fun `the server port is found whatever its case and wherever it comes`(): Unit = runBlocking {
+        val transport = ScriptedTransport(
+            listOf(reply(200, "", "Transport" to "RTP/AVP;unicast; Server_Port=6970;client_port=50100-50101")),
+        )
+        val client = RtspClient(transport, "192.168.100.1")
+
+        client.setupVideo(50100)
+
+        assertEquals(6970, client.serverPort)
     }
 
     @Test
@@ -89,26 +138,37 @@ class RtspClientTest {
         val client = RtspClient(transport, "192.168.100.1")
         client.connect()
 
-        val reply = client.setupVideo()
+        val reply = client.setupVideo(50100)
 
         assertFalse(reply.isSuccess)
         assertEquals(404, reply.statusCode)
         assertNull(client.session)
+        assertNull(client.serverPort)
     }
 
     @Test
-    fun `stream bytes that arrived with the play reply are not lost`(): Unit = runBlocking {
-        // The camera often packs the first RTP bytes into the same read as the PLAY reply. Dropping
-        // them loses the start of the first picture.
-        val withStream = reply(200, "") + bytes(0x80, 0x1A, 0x00, 0x01)
-        val transport = ScriptedTransport(listOf(withStream))
+    fun `waiting for the close ends when the camera closes the connection whatever it sent first`(): Unit =
+        runBlocking {
+            // Browsing the card is the camera closing the stream's connection. Anything it sends before that is
+            // not the stream, which comes as datagrams.
+            val transport = ScriptedTransport(listOf(reply(200, "") + bytes(1, 2, 3)))
+            val client = RtspClient(transport, "192.168.100.1")
+            client.play()
+            transport.arrive(bytes(4, 5, 6))
+
+            client.waitForClose()
+
+            assertEquals(3, transport.reads)
+        }
+
+    @Test
+    fun `waiting for the close can be given up`(): Unit = runBlocking {
+        val transport = ScriptedTransport(emptyList(), blocksWhenEmpty = true)
         val client = RtspClient(transport, "192.168.100.1")
-        client.connect()
 
-        client.play()
-        val stream = client.readStream()
-
-        assertContentEquals(bytes(0x80, 0x1A, 0x00, 0x01), stream)
+        assertFailsWith<kotlinx.coroutines.TimeoutCancellationException> {
+            withTimeout(50) { client.waitForClose() }
+        }
     }
 
     @Test
@@ -191,7 +251,7 @@ class RtspClientTest {
         val transport = ScriptedTransport(listOf(reply(200, "", "Session" to "ABCDEF;timeout=60"), reply(200, "")))
         val client = RtspClient(transport, "192.168.100.1")
 
-        client.setupVideo()
+        client.setupVideo(50100)
         client.play()
 
         assertEquals("ABCDEF", client.session)
@@ -202,7 +262,7 @@ class RtspClientTest {
     fun `a setup that succeeds without a session leaves none`(): Unit = runBlocking {
         val client = RtspClient(ScriptedTransport(listOf(reply(200, ""))), "192.168.100.1")
 
-        val reply = client.setupVideo()
+        val reply = client.setupVideo(50100)
 
         assertTrue(reply.isSuccess)
         assertNull(client.session)
@@ -249,7 +309,6 @@ class RtspClientTest {
         val reply = client.describe()
 
         assertEquals("", reply.body)
-        assertContentEquals(bytes(1, 2), client.readStream())
     }
 
     @Test
@@ -258,18 +317,6 @@ class RtspClientTest {
         val client = RtspClient(ScriptedTransport(listOf(text.toByteArray(Charsets.US_ASCII))), "h")
 
         assertEquals("", client.describe().body)
-    }
-
-    @Test
-    fun `once carried bytes are used up the stream is read from the connection`(): Unit = runBlocking {
-        val transport = ScriptedTransport(listOf(reply(200, "") + bytes(1)))
-        val client = RtspClient(transport, "192.168.100.1")
-        client.play()
-        transport.arrive(bytes(2, 3))
-
-        assertContentEquals(bytes(1), client.readStream())
-        assertContentEquals(bytes(2, 3), client.readStream())
-        assertContentEquals(ByteArray(0), client.readStream())
     }
 
     @Test
@@ -314,11 +361,16 @@ class RtspClientTest {
     private class ScriptedTransport(
         private val replies: List<ByteArray>,
         private val dribbleBytes: Int = 0,
+        private val blocksWhenEmpty: Boolean = false,
     ) : CameraTransport {
         private val queued = ArrayDeque<ByteArray>()
         private var next = 0
 
         val sent = mutableListOf<String>()
+
+        /** How many reads there have been. */
+        var reads = 0
+            private set
 
         override var isConnected = false
             private set
@@ -340,7 +392,8 @@ class RtspClientTest {
         }
 
         override suspend fun receive(into: ByteArray): Int {
-            val reply = queued.removeFirstOrNull() ?: return 0
+            reads++
+            val reply = queued.removeFirstOrNull() ?: if (blocksWhenEmpty) awaitCancellation() else return 0
             var take = if (dribbleBytes > 0) minOf(dribbleBytes, reply.size) else reply.size
             take = minOf(take, into.size)
             reply.copyInto(into, 0, 0, take)
@@ -369,5 +422,8 @@ class RtspClientTest {
                 "m=audio 0 RTP/AVP 97\r\n" +
                 "a=rtpmap:97 L16/16000/1\r\n" +
                 "a=control:track1\r\n"
+
+        /** The Transport header the reference camera answered SETUP with on 2026-10-06. */
+        const val REFERENCE_TRANSPORT = "RTP/AVP;unicast;client_port=63721-63722;server_port=59728-59729"
     }
 }

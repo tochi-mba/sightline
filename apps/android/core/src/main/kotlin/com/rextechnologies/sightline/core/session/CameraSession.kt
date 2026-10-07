@@ -1,23 +1,18 @@
 package com.rextechnologies.sightline.core.session
 
-import com.rextechnologies.sightline.protocol.CameraTransport
+import com.rextechnologies.sightline.protocol.CameraDatagrams
+import com.rextechnologies.sightline.protocol.CameraSockets
 import com.rextechnologies.sightline.protocol.gpsock.GpSockConnection
 import com.rextechnologies.sightline.protocol.rtp.CameraFrame
 import com.rextechnologies.sightline.protocol.rtp.RtspClient
 import com.rextechnologies.sightline.protocol.rtp.RtspException
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emitAll
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.Closeable
 import kotlin.time.Duration
@@ -25,33 +20,30 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
 
 /**
- * One conversation with one camera: its control channel, and its one live stream once asked for.
+ * One conversation with one camera: its control channel, and its stream while anybody watches it.
  *
  * The control connection is opened once and held for the life of this object, because the camera's
  * firmware treats that socket as the sign that a client is still there. Closing it stops a recording,
  * so this type closes it only when [close] is called.
  *
- * The camera answers one stream connection each time it is switched on, and cannot be asked to stop one:
- * TEARDOWN is not implemented and PAUSE is ignored. So the stream is opened once, the first time a
- * picture is wanted, and kept until the session ends; see PROTOCOL.md, "One stream per power-on".
- *
- * The transports come from a factory so tests can stand a fake camera behind both, and so the phone can
- * hand out sockets that travel over the camera's Wi-Fi. This is the port of the .NET `CameraSession`,
- * held to the same fakes and the same timings.
+ * The connections and the stream's socket come from a [CameraSockets], so tests can stand a fake camera
+ * behind them all, and so the phone can hand out sockets that travel over the camera's Wi-Fi. This is the
+ * port of the .NET `CameraSession`, held to the same fakes and the same timings.
  */
 class CameraSession private constructor(
     /** The control channel. */
     val control: GpSockConnection,
-    private val transports: (port: Int) -> CameraTransport,
+    private val sockets: CameraSockets,
     private val host: String,
     private val timing: CameraSessionTiming,
     private val scope: CoroutineScope,
     private val timeSource: TimeSource,
 ) : Closeable {
     private val lock = Any()
-    private var feed: Deferred<LiveFeed>? = null
-    private var running: LiveFeed? = null
-    private var spent: String? = null
+    private var feed: LiveFeed? = null
+
+    @Volatile
+    private var closed = false
 
     /**
      * Receives one line per step of starting and running the stream, when set.
@@ -62,23 +54,17 @@ class CameraSession private constructor(
     var trace: ((String) -> Unit)? = null
 
     /**
-     * Whether this session holds the camera's live picture: its one stream is open and still running, so
-     * anything that ends it, such as browsing the card, costs the picture until the camera's battery is taken
-     * out and put back.
-     */
-    val holdsLivePicture: Boolean
-        get() = synchronized(lock) { feed != null && spent == null }
-
-    /**
-     * Takes one picture from the live stream, without touching the camera's card. The stream is started
-     * if nothing has started it yet, and left running.
+     * Takes one picture from the stream, without touching the camera's card.
+     *
+     * The picture comes from the stream everybody else is watching, which this starts if nobody is, and
+     * which stops again afterwards if nobody else wants it.
      *
      * @throws CameraTimeoutException No whole picture arrived within [timeout].
-     * @throws LivePictureUnavailableException The camera will not give this session a live picture.
+     * @throws RtspException The camera refused the stream, or ended it before a picture arrived.
      */
     suspend fun grabFrame(timeout: Duration): CameraFrame {
         val frame = try {
-            withTimeoutOrNull(timeout) { frames().first() }
+            withTimeoutOrNull(timeout) { frames().firstOrNull() ?: throw endedBeforeAPicture() }
         } catch (_: CameraTimeoutException) {
             null
         }
@@ -88,85 +74,90 @@ class CameraSession private constructor(
     }
 
     /**
-     * The live picture, frame after frame, until the collector stops. Stopping leaves the stream running
-     * for whoever collects next.
+     * The camera's pictures, one after another, until the camera ends its stream or the collector stops,
+     * which both end the flow quietly.
      *
-     * The stream is started on the control channel first: RTSP alone negotiates happily and then delivers
-     * nothing. Frames that are not whole JPEGs are skipped, so a collector can decode everything it
-     * receives.
+     * Everybody collecting shares one stream, started on the control channel first: RTSP alone negotiates
+     * happily and then delivers nothing. The stream stops when its last collector stops, and the camera
+     * ends it on its own when its card is browsed; collecting again starts another. Pictures that are not
+     * whole JPEGs are skipped, so a collector can decode everything it receives.
      *
-     * @throws CameraTimeoutException Nothing arrived for [CameraSessionTiming.stall]. The stream stays
-     *   open; collecting again waits on it again.
-     * @throws LivePictureUnavailableException The camera will not give this session a live picture: it
-     *   ended the one it gave, or never started it.
+     * @throws CameraTimeoutException The stream did not start in time, or the camera went quiet.
+     * @throws RtspException The stream could not start, or its connection or socket failed.
      */
-    fun frames(): Flow<CameraFrame> = flow { emitAll(feed().pictures(timing.stall)) }
+    fun frames(): Flow<CameraFrame> = flow {
+        val watcher = watch()
+        try {
+            for (frame in watcher.pictures) {
+                emit(frame)
+            }
+        } finally {
+            watcher.leave()
+        }
+    }
 
     /**
      * Ends the session: the stream, then the control channel.
      *
-     * The camera stops recording when the control channel goes.
+     * The camera stops recording when the control channel goes. Anybody still collecting sees the pictures
+     * end.
      */
     override fun close() {
+        val current = synchronized(lock) {
+            closed = true
+            feed.also { feed = null }
+        }
+
+        current?.stop()
         scope.cancel()
-        synchronized(lock) { running }?.close()
         control.close()
     }
 
-    /** The session's one stream, started by whoever asks first. */
-    private suspend fun feed(): LiveFeed {
-        val starting = synchronized(lock) {
-            spent?.let { throw LivePictureUnavailableException(it) }
-            feed ?: scope.async { start() }.also { feed = it }
-        }
+    /** Why a stream that ended quietly gave no picture: the session closing, or the camera ending it. */
+    private fun endedBeforeAPicture(): Exception = if (closed) {
+        IllegalStateException("The session closed before a whole picture arrived.")
+    } else {
+        RtspException("The camera ended its stream before a whole picture arrived.")
+    }
 
-        return try {
-            starting.await()
-        } catch (cancelled: CancellationException) {
-            if (!currentCoroutineContext().isActive) {
-                throw cancelled
-            }
-
-            // The start was given up because the session ended, not because this caller did.
-            throw LivePictureUnavailableException(spend("The session ended before the live picture started."))
-        }
+    /** Joins the stream that is running, or starts one if none is. */
+    private fun watch(): LiveFeed.Watcher = synchronized(lock) {
+        check(!closed) { "The session has ended." }
+        // None is running, or the one there ended a moment ago and is on its way out.
+        feed?.watch() ?: LiveFeed(scope, ::startStream, timing.stall, { trace }, timeSource, ::retire)
+            .also { feed = it }
+            .first
     }
 
     /**
      * Starts the media flow and negotiates the stream, all within [CameraSessionTiming.start].
      *
-     * Not tied to whoever asked first: giving up waiting must not abandon a start others may be waiting
-     * on. Any failure is final for this session, because a second connection would not be answered.
+     * @return The stream's RTSP connection, played, and the socket its pictures arrive at.
+     * @throws CameraTimeoutException It did not start in time.
      */
-    private suspend fun start(): LiveFeed {
-        val rtsp = RtspClient(transports(RtspClient.PORT), host)
-        val started = try {
-            withTimeoutOrNull(timing.start) { negotiate(rtsp) }
-        } catch (cancelled: CancellationException) {
+    private suspend fun startStream(): Pair<RtspClient, CameraDatagrams> {
+        val rtsp = RtspClient(sockets.transport(RtspClient.PORT), host)
+        val datagrams = try {
+            sockets.datagrams()
+        } catch (failure: Throwable) {
             rtsp.close()
-            throw cancelled
-        } catch (failure: Exception) {
-            rtsp.close()
-            throw LivePictureUnavailableException(
-                spend(failure.message ?: "The live picture could not be started."),
-                failure,
-            )
+            throw failure
         }
 
-        if (started == null) {
+        try {
+            withTimeoutOrNull(timing.start) { negotiate(rtsp, datagrams) }
+                ?: throw CameraTimeoutException(
+                    "The camera did not start its stream within ${timing.start.inWholeSeconds} seconds.",
+                )
+            return rtsp to datagrams
+        } catch (failure: Throwable) {
             rtsp.close()
-            throw LivePictureUnavailableException(
-                spend(
-                    "The camera did not start its live picture within ${timing.start.inWholeSeconds} seconds, " +
-                        "which is what it does once it has given its live picture to an earlier connection.",
-                ),
-            )
+            datagrams.close()
+            throw failure
         }
-
-        return LiveFeed(rtsp, scope, { trace }, timeSource, ::spend).also { synchronized(lock) { running = it } }
     }
 
-    private suspend fun negotiate(rtsp: RtspClient) {
+    private suspend fun negotiate(rtsp: RtspClient, datagrams: CameraDatagrams) {
         trace?.invoke("control: RestartStreaming ...")
         control.startStreaming()
         trace?.invoke("control: RestartStreaming acknowledged")
@@ -175,8 +166,11 @@ class CameraSession private constructor(
         val describe = rtsp.describe()
         trace?.invoke("rtsp: DESCRIBE ${describe.statusCode}, ${describe.body.length} bytes of SDP")
 
-        val setup = rtsp.setupVideo()
-        trace?.invoke("rtsp: SETUP ${setup.statusCode}, session ${rtsp.session ?: "(none)"}")
+        val setup = rtsp.setupVideo(datagrams.port)
+        val from = rtsp.serverPort?.toString() ?: "a port it did not say"
+        trace?.invoke(
+            "rtsp: SETUP ${setup.statusCode}, session ${rtsp.session ?: "(none)"}, from $from to ${datagrams.port}",
+        )
         if (!setup.isSuccess) {
             throw RtspException("The camera refused the video track (${setup.statusCode}).")
         }
@@ -186,43 +180,48 @@ class CameraSession private constructor(
         if (!play.isSuccess) {
             throw RtspException("The camera would not start the stream (${play.statusCode}).")
         }
+
+        // A firewall that drops what it did not ask for lets the stream in as the reply to this.
+        rtsp.serverPort?.let { datagrams.send(OPENER, it) }
     }
 
-    /** Records that this session's live picture is gone, and returns what to tell people. */
-    private fun spend(reason: String): String {
-        val told = "$reason ${LivePictureUnavailableException.ADVICE}"
+    /** Lets go of a stream that is over, or that nobody is watching any more. */
+    private fun retire(ended: LiveFeed) {
         synchronized(lock) {
-            if (spent == null) {
-                spent = told
+            if (feed === ended) {
+                feed = null
             }
         }
 
-        return told
+        ended.stop()
     }
 
     companion object {
         /** The address every camera of this family answers on. */
         const val CAMERA_HOST = "192.168.100.1"
 
+        /** What is sent from the stream's port to the camera's, so a firewall lets the stream in as the reply. */
+        private val OPENER = byteArrayOf(0)
+
         /**
-         * Opens a session over transports from [transports].
+         * Opens a session over [sockets].
          *
-         * @param transports Makes a transport to a given port on the camera.
-         * @param scope Where the stream is read, once there is one; the session ends its own part of it.
+         * @param sockets Connections to the camera, and sockets for its stream.
+         * @param scope Where the stream runs while anybody watches it; the session ends its own part of it.
          * @param host The camera's address, as RTSP URLs must name it.
          * @param timing How long each step may take; the real values when omitted.
          * @param timeSource How the age of a picture is measured.
          * @throws CameraTimeoutException The control port did not answer within [CameraSessionTiming.open].
          */
         suspend fun open(
-            transports: (port: Int) -> CameraTransport,
+            sockets: CameraSockets,
             scope: CoroutineScope,
             host: String = CAMERA_HOST,
             timing: CameraSessionTiming = CameraSessionTiming.Default,
             timeSource: TimeSource = TimeSource.Monotonic,
         ): CameraSession {
             require(host.isNotBlank()) { "The camera's host must not be blank." }
-            val control = GpSockConnection(transports(GpSockConnection.PORT))
+            val control = GpSockConnection(sockets.transport(GpSockConnection.PORT))
             try {
                 withTimeoutOrNull(timing.open) { control.open() }
                     ?: throw CameraTimeoutException(
@@ -234,7 +233,7 @@ class CameraSession private constructor(
             }
 
             val own = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
-            return CameraSession(control, transports, host, timing, own, timeSource)
+            return CameraSession(control, sockets, host, timing, own, timeSource)
         }
     }
 }
@@ -244,7 +243,7 @@ class CameraSession private constructor(
  *
  * @property open To connect the control channel.
  * @property start To start: RestartStreaming, then RTSP's DESCRIBE, SETUP and PLAY.
- * @property stall To go silent before a watcher is told so. At about 12 pictures a second this is many
+ * @property stall To go silent before the stream is called lost. At about 12 pictures a second this is many
  *   dozens of missing frames.
  */
 data class CameraSessionTiming(val open: Duration, val start: Duration, val stall: Duration) {
@@ -262,21 +261,3 @@ data class CameraSessionTiming(val open: Duration, val start: Duration, val stal
  * is collecting.
  */
 class CameraTimeoutException(override val message: String) : Exception(message)
-
-/**
- * The camera will not give this session a live picture, and asking again will not change that until its
- * battery is taken out and put back.
- *
- * The reference camera answers one stream connection per power-on, ends it when its card is browsed, and
- * leaves its own buttons stuck once it has ended, so it cannot even be switched off; see PROTOCOL.md,
- * "One stream per power-on".
- */
-class LivePictureUnavailableException(override val message: String, cause: Throwable? = null) :
-    Exception(message, cause) {
-    companion object {
-        /** What to do about it, said after every reason. */
-        const val ADVICE =
-            "This camera gives its live picture once each time it starts, and its own buttons stay stuck once it " +
-                "ends: take its battery out and put it back to see it again."
-    }
-}

@@ -17,8 +17,10 @@ import com.rextechnologies.sightline.core.link.PhoneNetworks
 import com.rextechnologies.sightline.core.sentry.SentryActions
 import com.rextechnologies.sightline.core.settings.SettingsStore
 import com.rextechnologies.sightline.core.updates.WhatsNewEntry
+import com.rextechnologies.sightline.protocol.CameraDatagrams
 import com.rextechnologies.sightline.protocol.CameraTransport
 import com.rextechnologies.sightline.protocol.FakeCamera
+import com.rextechnologies.sightline.protocol.FakeCameraSockets
 import com.rextechnologies.sightline.protocol.FakeRtspCamera
 import com.rextechnologies.sightline.protocol.gpsock.CameraFile
 import com.rextechnologies.sightline.protocol.gpsock.GpSockConnection
@@ -76,26 +78,21 @@ class RecordedSentryActions : SentryActions {
 }
 
 /**
- * The shared fake camera behind a fake network: every join succeeds unless told otherwise. The camera
- * keeps the reference camera's rule for its picture: it answers the first stream connection after it is
- * switched on and no other, until [powerCycle]; and browse mode hangs up the one it is serving.
+ * The shared fake camera behind a fake network: every join succeeds unless told otherwise, every live view
+ * gets a fresh fake stream, and browse mode hangs up the stream it is serving, as the real camera does.
  */
 class FakeLink(private val control: FakeCamera) : CameraLink {
     val requests = mutableListOf<CameraNetwork>()
     val failures = ArrayDeque<LinkFailure>()
     var waits = false
     var stream: FakeRtspCamera.() -> Unit = { frames += TestGraph.picture() }
-    val streams = mutableListOf<FakeRtspCamera>()
     private val leases = mutableListOf<Lease>()
-    private var served = 0
+
+    /** Every stream opened, in order. */
+    val streams = mutableListOf<FakeRtspCamera>()
 
     init {
         control.enteredBrowse = { streams.forEach(FakeRtspCamera::hangUp) }
-    }
-
-    /** Switches the camera off and on: its next stream connection is answered again. */
-    fun powerCycle() {
-        served = 0
     }
 
     override suspend fun join(network: CameraNetwork): CameraLinkLease {
@@ -110,21 +107,21 @@ class FakeLink(private val control: FakeCamera) : CameraLink {
 
     inner class Lease : CameraLinkLease {
         val loss = CompletableDeferred<Unit>()
-
-        override fun transport(port: Int): CameraTransport = if (port == GpSockConnection.PORT) {
-            control
-        } else {
-            FakeRtspCamera().apply {
-                streamStarted = { control.isStreaming }
-                stream()
-                if (served++ > 0) {
-                    // A connection after the first since power-on: accepted, and never answered.
-                    neverAnswers = neverAnswers ?: "DESCRIBE"
+        private val sockets = FakeCameraSockets { port ->
+            if (port == GpSockConnection.PORT) {
+                control
+            } else {
+                FakeRtspCamera().apply {
+                    streamStarted = { control.isStreaming }
+                    stream()
+                    streams += this
                 }
-
-                streams += this
             }
         }
+
+        override fun transport(port: Int): CameraTransport = sockets.transport(port)
+
+        override fun datagrams(): CameraDatagrams = sockets.datagrams()
 
         override suspend fun awaitLoss() = loss.await()
 

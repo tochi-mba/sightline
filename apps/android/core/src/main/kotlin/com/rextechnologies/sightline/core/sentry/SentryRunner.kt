@@ -92,8 +92,7 @@ class SentryRunner(
         )
         armed.arm()
         mutableStatus.value = SentryStatus(armed = true, watch = armed.state)
-        // Arming is the person asking for the picture, for as long as Sentry stays armed: it watches nothing else.
-        controller.holdLive(LIVE_HOLDER, asking = true)
+        controller.holdLive(LIVE_HOLDER)
         watching = scope.launch { controller.frames.filterNotNull().collect { look(armed, it.jpeg) } }
     }
 

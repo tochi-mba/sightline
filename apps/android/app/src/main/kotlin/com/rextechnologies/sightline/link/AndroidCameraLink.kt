@@ -14,10 +14,17 @@ import com.rextechnologies.sightline.core.link.CameraLinkLease
 import com.rextechnologies.sightline.core.link.CameraNetwork
 import com.rextechnologies.sightline.core.link.LinkFailure
 import com.rextechnologies.sightline.core.session.CameraSession
+import com.rextechnologies.sightline.protocol.CameraDatagrams
 import com.rextechnologies.sightline.protocol.CameraTransport
 import com.rextechnologies.sightline.protocol.TcpCameraTransport
+import com.rextechnologies.sightline.protocol.UdpCameraDatagrams
 import kotlinx.coroutines.CompletableDeferred
+import java.io.IOException
+import java.net.DatagramSocket
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.SocketAddress
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -39,6 +46,13 @@ interface NetworkSystem {
 
     /** Withdraws the request [callback] made; the phone leaves that network if nothing else wants it. */
     fun release(callback: ConnectivityManager.NetworkCallback)
+
+    /**
+     * A UDP socket that travels over [network] and nothing else, bound to the phone's own address there.
+     *
+     * @throws IOException The phone has no address on [network] yet.
+     */
+    fun datagramSocket(network: Network): DatagramSocket
 }
 
 /** The real [NetworkSystem]. */
@@ -54,6 +68,24 @@ class AndroidNetworkSystem(context: Context) : NetworkSystem {
 
     override fun release(callback: ConnectivityManager.NetworkCallback) {
         connectivity.unregisterNetworkCallback(callback)
+    }
+
+    override fun datagramSocket(network: Network): DatagramSocket {
+        // The phone's own address on the camera's network, so nothing arriving over mobile data can reach it.
+        val local = connectivity.getLinkProperties(network)?.linkAddresses.orEmpty()
+            .map { it.address }
+            .firstOrNull { it is Inet4Address }
+            ?: throw IOException("The phone has no address on the camera's network yet.")
+        val socket = DatagramSocket(null as SocketAddress?)
+        try {
+            network.bindSocket(socket)
+            socket.bind(InetSocketAddress(local, 0))
+        } catch (failure: Throwable) {
+            socket.close()
+            throw failure
+        }
+
+        return socket
     }
 }
 
@@ -162,6 +194,10 @@ internal class AndroidCameraLease(private val system: NetworkSystem) : CameraLin
         )
     }
 
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    override fun datagrams(): CameraDatagrams =
+        UdpCameraDatagrams(CAMERA, system.datagramSocket(joined.getCompleted()))
+
     override suspend fun awaitLoss() = lost.await()
 
     override fun close() {
@@ -170,5 +206,10 @@ internal class AndroidCameraLease(private val system: NetworkSystem) : CameraLin
             // when it is released again; that is the outcome wanted, so it is not an error here.
             runCatching { system.release(callback) }
         }
+    }
+
+    private companion object {
+        /** The camera's address, whose datagrams alone are its stream. A literal address: nothing is looked up. */
+        val CAMERA: InetAddress = InetAddress.getByName(CameraSession.CAMERA_HOST)
     }
 }

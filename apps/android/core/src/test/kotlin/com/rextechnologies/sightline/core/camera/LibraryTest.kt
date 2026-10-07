@@ -42,6 +42,7 @@ class LibraryTest {
     @Test
     fun `the card is listed and each thumbnail fetched, with the camera put back after`() = runTest {
         val camera = cameraWithCard()
+        camera.control.isStreaming = false
 
         val files = camera.listed()
 
@@ -54,23 +55,24 @@ class LibraryTest {
     }
 
     @Test
-    fun `reading the card ends the live picture until the camera restarts`() = runTest {
+    fun `reading the card pauses the live view and starts it again after`() = runTest {
         val camera = cameraWithCard()
         camera.controller.holdLive("screen")
-        camera.controller.showLivePicture()
-        assertTrue(camera.until { it.live is LiveView.Playing }.holdsLivePicture)
+        camera.until { it.live is LiveView.Playing }
 
         camera.listed()
 
         assertTrue(camera.seen.any { it.live == LiveView.Paused })
-        assertFalse(camera.until { it.live is LiveView.Unavailable }.holdsLivePicture)
-        assertEquals(1, camera.streams.size)
+        // Closing the stream's connection is what stops the camera sending.
+        assertTrue(camera.streams.first().wasClosed)
+        assertTrue(camera.until { it.live is LiveView.Playing }.live is LiveView.Playing)
+        assertEquals(2, camera.streams.size)
     }
 
     @Test
     fun `files whose thumbnails the camera will not give are listed anyway`() = runTest {
         val camera = cameraWithCard()
-        camera.control.forcedRefusals[GpSockCommand.PlaybackGetThumbnail] = NakCode.GetThumbnailFail
+        camera.control.refuseThumbnailsWith = NakCode.GetThumbnailFail
 
         val files = camera.listed()
 
@@ -81,6 +83,7 @@ class LibraryTest {
     @Test
     fun `thumbnails already fetched are kept and those of files gone are dropped`() = runTest {
         val camera = cameraWithCard()
+        camera.control.isStreaming = false
         val first = camera.listed()
 
         camera.controller.delete(listOf(first[0]))!!.join()

@@ -32,8 +32,9 @@ data class RtspReply(val statusCode: Int, val headers: Map<String, String>, val 
  *    `a=control` line of the SDP instead selects the audio track, and the picture never arrives.
  * 2. A DESCRIBE reply has a body. Reading only as far as the blank line leaves the SDP in the socket
  *    and every later read is misaligned, which looks like the camera talking nonsense.
- * 3. After PLAY the camera sends bare RTP with no interleaved framing, whatever transport it agreed
- *    to. [RtpJpegReassembler] is what makes sense of that.
+ * 3. The stream must be asked for over UDP. Asked for over this connection, the camera sends bare RTP
+ *    with no interleaved framing, answers that only once each time it is switched on, and leaves its own
+ *    buttons stuck once the stream ends, until its battery comes out. Over UDP it does none of that.
  *
  * The stream also stays silent until the control channel has been told to start it — see
  * `GpSockConnection.startStreaming`. A session that negotiates perfectly and delivers nothing is
@@ -57,6 +58,15 @@ class RtspClient(private val transport: CameraTransport, host: String) : Closeab
     var session: String? = null
         private set
 
+    /**
+     * The port the camera sends the stream from, once SETUP has succeeded, or null if it did not say.
+     *
+     * A datagram sent to it from the stream's own port is what lets the stream in through a firewall that
+     * drops what it did not ask for.
+     */
+    var serverPort: Int? = null
+        private set
+
     /** The URL of the video track, which is the base URL plus the track name. */
     val videoTrackUrl: String
         get() = "$baseUrl/track0"
@@ -72,13 +82,17 @@ class RtspClient(private val transport: CameraTransport, host: String) : Closeab
     /** Asks for the stream description, whose body is SDP. */
     suspend fun describe(): RtspReply = send("DESCRIBE", baseUrl, mapOf("Accept" to "application/sdp"))
 
-    /** Sets up the video track, asking for the stream over this same connection. */
-    suspend fun setupVideo(): RtspReply {
-        val reply = send("SETUP", videoTrackUrl, mapOf("Transport" to "RTP/AVP/TCP;unicast;interleaved=0-1"))
+    /** Sets up the video track, asking for the stream as datagrams to [clientPort]. */
+    suspend fun setupVideo(clientPort: Int): RtspReply {
+        val reply = send(
+            "SETUP",
+            videoTrackUrl,
+            mapOf("Transport" to "RTP/AVP;unicast;client_port=$clientPort-${clientPort + 1}"),
+        )
 
-        val granted = reply.header("Session")
-        if (reply.isSuccess && granted != null) {
-            session = granted.split(';')[0].trim()
+        if (reply.isSuccess) {
+            reply.header("Session")?.let { session = it.split(';')[0].trim() }
+            serverPort = serverPortIn(reply.header("Transport"))
         }
 
         return reply
@@ -88,20 +102,14 @@ class RtspClient(private val transport: CameraTransport, host: String) : Closeab
     suspend fun play(): RtspReply = send("PLAY", baseUrl, mapOf("Range" to "npt=0.000-"))
 
     /**
-     * Reads whatever stream bytes have arrived, for feeding to a reassembler.
-     *
-     * @return The bytes read, which is empty when the camera has stopped sending.
+     * Waits for the camera to close this connection, which is how it ends a stream: browsing its card does,
+     * for one. Anything it sends meanwhile is not the stream, which comes as datagrams, and is let go of.
      */
-    suspend fun readStream(): ByteArray {
-        if (pending.size > 0) {
-            // Bytes that arrived in the same read as the PLAY reply are stream data already.
-            val carried = pending.toByteArray()
-            pending.clear()
-            return carried
+    suspend fun waitForClose() {
+        pending.clear()
+        while (transport.receive(buffer) > 0) {
+            // Not the stream.
         }
-
-        val read = transport.receive(buffer)
-        return buffer.copyOf(read)
     }
 
     private suspend fun send(verb: String, url: String, extra: Map<String, String>): RtspReply {
@@ -191,8 +199,15 @@ class RtspClient(private val transport: CameraTransport, host: String) : Closeab
         const val STREAM_PATH = "/?action=stream"
 
         private val BLANK_LINE = "\r\n\r\n".toByteArray(Charsets.US_ASCII)
+
+        /** The first port of the `server_port` in a SETUP reply's Transport header, if it has a usable one. */
+        private fun serverPortIn(transport: String?): Int? = transport.orEmpty().split(';')
+            .map { it.split('=', limit = 2) }
+            .firstOrNull { it.size == 2 && it[0].trim().equals("server_port", ignoreCase = true) }
+            ?.let { it[1].substringBefore('-').toIntOrNull() }
+            ?.takeIf { it in 1..65535 }
     }
 }
 
-/** The camera's RTSP server did something this client cannot make sense of. */
-class RtspException(message: String) : Exception(message)
+/** The camera's RTSP server did something this client cannot make sense of, or the stream it was serving failed. */
+class RtspException(message: String, cause: Throwable? = null) : Exception(message, cause)

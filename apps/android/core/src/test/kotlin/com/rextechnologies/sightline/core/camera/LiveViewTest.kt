@@ -1,7 +1,6 @@
 package com.rextechnologies.sightline.core.camera
 
 import com.rextechnologies.sightline.core.link.CameraNetwork
-import com.rextechnologies.sightline.core.session.LivePictureUnavailableException
 import com.rextechnologies.sightline.protocol.FakeRtspCamera
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -9,114 +8,47 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
-/**
- * The live picture: started when somebody wants it, its one stream kept for the whole connection, and
- * said to be gone, not retried, once the camera will not give it again.
- */
+/** The live picture: started when somebody wants it, kept going through failures, stopped when not. */
 class LiveViewTest {
-    /** Holds the picture for the screen and asks for it, as pressing "Show the live picture" does. */
-    private fun ControllerHarness.watch() {
-        controller.holdLive("screen")
-        controller.showLivePicture()
-    }
-
-    /** A dozen pictures a second for minutes, as the real camera streams. */
-    private fun ControllerHarness.streamsForMinutes() {
-        stream = {
-            frames += List(1500) { FakeRtspCamera.jpeg(600 + it % 7) }
-            pace = 80.milliseconds
-        }
-    }
-
     @Test
-    fun `the live view shows while somebody holds it and the stream stays open when nobody does`() = runTest {
+    fun `the live view runs while somebody holds it and stops when the last lets go`() = runTest {
         val camera = ControllerHarness(this)
-        camera.streamsForMinutes()
+        val picture = FakeRtspCamera.jpeg(900)
+        camera.stream = { frames += picture }
         camera.connected()
 
-        camera.watch()
+        camera.controller.holdLive("screen")
         camera.controller.holdLive("sentry")
-        assertTrue(camera.until { it.live is LiveView.Playing }.holdsLivePicture)
+        camera.until { it.live is LiveView.Playing }
         val frame = assertNotNull(camera.controller.frames.value)
         camera.controller.releaseLive("screen")
         runCurrent()
+
+        assertContentEquals(picture, frame.jpeg)
+        assertEquals(640, frame.width)
+        assertEquals(360, frame.height)
         assertTrue(camera.state.live is LiveView.Playing)
         camera.controller.releaseLive("sentry")
         runCurrent()
-
         assertEquals(LiveView.Off, camera.state.live)
-        assertEquals(640, frame.width)
-        assertEquals(360, frame.height)
-        // The camera answers one stream per power-on, so letting go of the picture keeps the stream.
-        assertTrue(camera.streams.single().isConnected)
-        assertTrue(camera.state.holdsLivePicture)
-        camera.watch()
-        camera.until { it.live is LiveView.Playing }
-        assertEquals(1, camera.streams.size)
+        // Closing the stream's connection is what stops the camera sending.
+        assertTrue(camera.streams.single().wasClosed)
     }
 
     @Test
-    fun `the picture is offered rather than started until the person asks`() = runTest {
+    fun `holding the live view before connecting starts it once connected`() = runTest {
         val camera = ControllerHarness(this)
         camera.controller.holdLive("screen")
         assertEquals(LiveView.Off, camera.state.live)
 
         camera.connected()
-        camera.until { it.live == LiveView.Offered }
-        advanceTimeBy(30.seconds)
-        assertTrue(camera.streams.isEmpty())
-        assertFalse(camera.state.holdsLivePicture)
 
-        camera.controller.showLivePicture()
-
-        assertTrue(camera.until { it.live is LiveView.Playing }.holdsLivePicture)
-    }
-
-    @Test
-    fun `a holder that asks starts the picture while it holds it`() = runTest {
-        val camera = ControllerHarness(this)
-        camera.controller.holdLive("sentry", asking = true)
-
-        camera.connected()
-        camera.until { it.live is LiveView.Playing }
-        camera.controller.releaseLive("sentry")
-        camera.controller.holdLive("screen")
-
-        assertEquals(LiveView.Offered, camera.until { it.live == LiveView.Offered }.live)
-    }
-
-    @Test
-    fun `leaving a camera whose picture ran says its buttons are stuck and the offer starts over`() = runTest {
-        val camera = ControllerHarness(this)
-        camera.streamsForMinutes()
-        camera.connected()
-        camera.watch()
-        camera.until { it.live is LiveView.Playing }
-
-        camera.controller.disconnect().join()
-
-        assertEquals(BUTTONS_STUCK, camera.state.notice?.text)
-        camera.powerCycle()
-        camera.connected()
-        assertEquals(LiveView.Offered, camera.until { it.live == LiveView.Offered }.live)
-    }
-
-    @Test
-    fun `leaving a camera whose picture never ran says nothing`() = runTest {
-        val camera = ControllerHarness(this)
-        camera.connected()
-        camera.controller.holdLive("screen")
-        camera.until { it.live == LiveView.Offered }
-
-        camera.controller.disconnect().join()
-
-        assertEquals(null, camera.state.notice)
+        assertTrue(camera.until { it.live is LiveView.Playing }.live is LiveView.Playing)
     }
 
     @Test
@@ -128,7 +60,7 @@ class LiveViewTest {
         }
         camera.connected()
 
-        camera.watch()
+        camera.controller.holdLive("screen")
         val first = camera.until { it.live is LiveView.Playing }.live as LiveView.Playing
         val measured = camera.until {
             (it.live as? LiveView.Playing)?.framesPerSecond?.let { rate -> rate > 0 } == true
@@ -139,42 +71,7 @@ class LiveViewTest {
     }
 
     @Test
-    fun `frames count up so the same picture twice is still two frames`() = runTest {
-        val camera = ControllerHarness(this)
-        val picture = FakeRtspCamera.jpeg(500)
-        camera.stream = {
-            frames += listOf(picture, picture)
-            pace = 100.milliseconds
-        }
-        camera.connected()
-
-        camera.watch()
-        camera.until { it.live is LiveView.Playing }
-        val first = assertNotNull(camera.controller.frames.value)
-        advanceTimeBy(150.milliseconds)
-        val second = assertNotNull(camera.controller.frames.value)
-
-        assertContentEquals(picture, second.jpeg)
-        assertEquals(first.number + 1, second.number)
-    }
-
-    @Test
-    fun `a stream that goes quiet is said and waited on without another connection`() = runTest {
-        val camera = ControllerHarness(this)
-        camera.stream = { streamStarted = { false } }
-        camera.connected()
-
-        camera.watch()
-        val interrupted = camera.until { it.live is LiveView.Interrupted }.live as LiveView.Interrupted
-        advanceTimeBy(30.seconds)
-
-        assertEquals("The camera sent nothing for 8 seconds.", interrupted.reason)
-        assertEquals(1, camera.streams.size)
-        assertEquals(listOf("DESCRIBE", "SETUP", "PLAY"), camera.streams.single().verbs)
-    }
-
-    @Test
-    fun `a camera that ends its stream has the picture called gone and not asked for again`() = runTest {
+    fun `frames count up across streams so the same picture twice is still two frames`() = runTest {
         val camera = ControllerHarness(this)
         camera.stream = {
             frames += FakeRtspCamera.jpeg(500)
@@ -182,43 +79,76 @@ class LiveViewTest {
         }
         camera.connected()
 
-        camera.watch()
-        val gone = camera.until { it.live is LiveView.Unavailable }
-        camera.controller.releaseLive("screen")
-        camera.watch()
-        advanceTimeBy(60.seconds)
+        camera.controller.holdLive("screen")
+        camera.until { it.live is LiveView.Interrupted }
+        val firstNumber = assertNotNull(camera.controller.frames.value).number
+        advanceTimeBy(2.1.seconds)
 
-        assertEquals(
-            LiveView.Unavailable("The camera ended its live picture. ${LivePictureUnavailableException.ADVICE}"),
-            gone.live,
-        )
-        assertFalse(gone.holdsLivePicture)
-        assertTrue(camera.state.live is LiveView.Unavailable)
-        assertEquals(1, camera.streams.size)
+        assertEquals(firstNumber + 1, assertNotNull(camera.controller.frames.value).number)
     }
 
     @Test
-    fun `a stream the camera refuses says why and is not asked for again`() = runTest {
+    fun `a stream that goes quiet is called interrupted and started again`() = runTest {
+        val camera = ControllerHarness(this)
+        camera.connected()
+
+        camera.controller.holdLive("screen")
+        val interrupted = camera.until { it.live is LiveView.Interrupted }.live as LiveView.Interrupted
+        camera.until { it.live is LiveView.Playing }
+
+        assertEquals("The camera sent nothing for 8 seconds.", interrupted.reason)
+        assertEquals(2, camera.streams.size)
+    }
+
+    @Test
+    fun `a camera that ends the stream gets it started again`() = runTest {
+        val camera = ControllerHarness(this)
+        camera.stream = { closesAfterFrames = true }
+        camera.connected()
+
+        camera.controller.holdLive("screen")
+        val interrupted = camera.until { it.live is LiveView.Interrupted }.live as LiveView.Interrupted
+
+        assertEquals("The camera ended the live view.", interrupted.reason)
+    }
+
+    @Test
+    fun `a stream that keeps failing is retried less often, up to every ten seconds`() = runTest {
         val camera = ControllerHarness(this)
         camera.stream = { setupStatus = 454 }
         camera.connected()
 
-        camera.watch()
+        camera.controller.holdLive("screen")
         advanceTimeBy(60.seconds)
 
-        assertEquals(
-            LiveView.Unavailable("The camera refused the video track (454). ${LivePictureUnavailableException.ADVICE}"),
-            camera.state.live,
-        )
-        assertEquals(1, camera.streams.size)
+        // At 0, 2, 6, 12, 20, 30, 40 and 50 seconds: each wait two seconds longer, until it is ten.
+        assertEquals(8, camera.streams.size)
+        assertEquals(LiveView.Interrupted("The camera refused the video track (454)."), camera.state.live)
     }
 
     @Test
-    fun `a dropped network takes the picture with it until the camera is switched off and on`() = runTest {
+    fun `a stream that works again resets the wait before the next retry`() = runTest {
         val camera = ControllerHarness(this)
-        camera.streamsForMinutes()
+        var attempt = 0
+        camera.stream = {
+            attempt++
+            // Fails twice, then streams once and closes, then fails again.
+            if (attempt == 3) frames += FakeRtspCamera.jpeg(400) else setupStatus = 454
+            closesAfterFrames = true
+        }
         camera.connected()
-        camera.watch()
+
+        camera.controller.holdLive("screen")
+        advanceTimeBy(2.seconds + 4.seconds + 2.seconds + 1.milliseconds)
+
+        assertEquals(4, camera.streams.size)
+    }
+
+    @Test
+    fun `the live view stops when the camera is lost and comes back with it`() = runTest {
+        val camera = ControllerHarness(this)
+        camera.connected()
+        camera.controller.holdLive("screen")
         camera.until { it.live is LiveView.Playing }
 
         camera.link.lease.lose()
@@ -226,28 +156,8 @@ class LiveViewTest {
         assertEquals(LiveView.Off, camera.state.live)
         assertTrue(camera.streams.first().wasClosed)
 
-        // The camera is still on, so it does not answer the reconnect's stream.
         camera.until { it.isConnected }
-        assertTrue(camera.until { it.live is LiveView.Unavailable }.live is LiveView.Unavailable)
-        assertEquals(2, camera.streams.size)
-    }
-
-    @Test
-    fun `switching the camera off and on brings the picture back with the reconnect`() = runTest {
-        val camera = ControllerHarness(this)
-        camera.streamsForMinutes()
-        camera.connected()
-        camera.watch()
-        camera.until { it.live is LiveView.Playing }
-        camera.streams.single().hangUp()
-        camera.until { it.live is LiveView.Unavailable }
-
-        // Switched off: the network goes. Switched on: the reconnect finds a camera with its picture to give.
-        camera.powerCycle()
-        camera.link.lease.lose()
-
-        assertTrue(camera.until { it.live is LiveView.Playing && it.holdsLivePicture }.holdsLivePicture)
-        assertEquals(2, camera.streams.size)
+        assertTrue(camera.until { it.live is LiveView.Playing }.live is LiveView.Playing)
     }
 
     @Test

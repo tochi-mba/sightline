@@ -1,6 +1,6 @@
 package com.rextechnologies.sightline.core.link
 
-import com.rextechnologies.sightline.protocol.CameraTransport
+import com.rextechnologies.sightline.protocol.CameraSockets
 import java.io.Closeable
 
 /**
@@ -65,11 +65,11 @@ fun interface CameraLink {
     suspend fun join(network: CameraNetwork): CameraLinkLease
 }
 
-/** The camera's network, held until [close] gives it back. */
-interface CameraLinkLease : Closeable {
-    /** A transport to [port] on the camera, carried over the camera's network and nothing else. */
-    fun transport(port: Int): CameraTransport
-
+/**
+ * The camera's network, held until [close] gives it back: connections and sockets carried over the camera's
+ * network and nothing else.
+ */
+interface CameraLinkLease : CameraSockets, Closeable {
     /** Returns once the system has lost the camera's network, which a sleeping camera causes. */
     suspend fun awaitLoss()
 

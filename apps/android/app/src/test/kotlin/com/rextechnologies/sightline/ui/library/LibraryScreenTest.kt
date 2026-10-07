@@ -35,48 +35,15 @@ class LibraryScreenTest {
     private val test = TestGraph().also { it.graph.settings[AppSettings.OnboardingDone] = true }
     private val taken = LocalDateTime.of(2026, 10, 4, 18, 35, 56)
 
-    /**
-     * Opens the card page, then connects when [connect] says to: with nobody watching the picture then,
-     * the card is read as soon as the camera is there, at no cost.
-     */
-    private fun openCard(connect: Boolean = false) {
+    private fun openCard() {
         compose.setContent { RexTheme { SightlineApp(test.graph, FakePlatform()) } }
         compose.onNodeWithText("CARD").performClick()
-        if (connect) {
-            test.connected()
-        }
-
         settle()
     }
 
     private fun settle() {
         test.settle(Duration.ofSeconds(1))
         compose.waitForIdle()
-    }
-
-    @Test
-    fun `once the picture has been seen the card waits to be asked and says what it costs`() {
-        test.camera.addFile('J', taken, FakeRtspCamera.jpeg(3000))
-        compose.setContent { RexTheme { SightlineApp(test.graph, FakePlatform()) } }
-        // Drawn first, so the Live page is there to offer the picture when the camera connects.
-        compose.waitForIdle()
-        test.connected()
-        compose.waitForIdle()
-        compose.onNodeWithText("SHOW THE LIVE PICTURE").performClick()
-        test.until { it.holdsLivePicture }
-
-        compose.onNodeWithText("CARD").performClick()
-        settle()
-
-        compose.onNodeWithText(
-            "Reading the card ends the live picture, which then needs the camera's battery taken out and " +
-                "put back: it cannot show its picture and list its files at once.",
-        ).assertExists()
-        assertTrue(test.graph.controller.state.value.library.files == null)
-        compose.onNodeWithText("READ THE CARD").performClick()
-        test.until { it.library.files != null && it.task == null }
-        compose.waitForIdle()
-        compose.onNodeWithText("1 photo").assertExists()
     }
 
     @Test
@@ -92,7 +59,10 @@ class LibraryScreenTest {
         test.camera.thumbnailOf = { TestGraph.picture() }
         test.camera.addFile('J', taken, FakeRtspCamera.jpeg(3000))
         test.camera.addFile('A', taken.plusDays(1), ByteArray(5000))
-        openCard(connect = true)
+        test.connected()
+        // The camera refuses thumbnails while it streams, and connecting started the live view.
+        test.camera.isStreaming = false
+        openCard()
 
         compose.onNodeWithText("1 video, 1 photo").assertExists()
         compose.onNodeWithText("SUNDAY 4 OCTOBER 2026").assertExists()
@@ -109,7 +79,8 @@ class LibraryScreenTest {
     fun `selected files are deleted only after a confirmation`() {
         test.camera.addFile('J', taken, FakeRtspCamera.jpeg(3000))
         test.camera.addFile('J', taken, FakeRtspCamera.jpeg(3000))
-        openCard(connect = true)
+        test.connected()
+        openCard()
 
         compose.onAllNodes(hasContentDescription("Photo, 4 October 2026, 18:35, 3 KB")).assertCountEquals(2)
         compose.onAllNodes(hasText("PHOTO"))[0].performClick()
@@ -128,7 +99,8 @@ class LibraryScreenTest {
     @Test
     fun `one file deleted is asked about in the singular, and selecting again deselects`() {
         test.camera.addFile('J', taken, FakeRtspCamera.jpeg(3000))
-        openCard(connect = true)
+        test.connected()
+        openCard()
 
         compose.onNodeWithText("PHOTO").performClick()
         compose.onNodeWithText("PHOTO").performClick()
@@ -141,7 +113,8 @@ class LibraryScreenTest {
 
     @Test
     fun `an empty card says so, and the card can be read again`() {
-        openCard(connect = true)
+        test.connected()
+        openCard()
 
         compose.onNodeWithText("The card is empty").assertExists()
         test.camera.addFile('J', taken, FakeRtspCamera.jpeg(3000))
@@ -157,7 +130,8 @@ class LibraryScreenTest {
         test.camera.addFile('J', taken, FakeRtspCamera.jpeg(3000))
         test.camera.downloadStallsAfterBytes = 1000
         test.camera.downloadChunk = 500
-        openCard(connect = true)
+        test.connected()
+        openCard()
 
         compose.onAllNodes(hasText("PHOTO"))[0].performClick()
         compose.onAllNodes(hasText("PHOTO"))[1].performClick()
@@ -173,7 +147,8 @@ class LibraryScreenTest {
     fun `a copy the camera refuses says why`() {
         test.camera.addFile('J', taken, FakeRtspCamera.jpeg(3000))
         test.camera.refuseDownloadWith = NakCode.FullStorage
-        openCard(connect = true)
+        test.connected()
+        openCard()
 
         compose.onNodeWithText("PHOTO").performClick()
         compose.onNodeWithText("COPY 1 TO PHONE").performClick()
@@ -202,7 +177,8 @@ class LibraryScreenTest {
     fun `with the setting on, a file safely copied is deleted from the card`() {
         test.graph.settings[AppSettings.DeleteAfterCopy] = true
         test.camera.addFile('J', taken, FakeRtspCamera.jpeg(3000))
-        openCard(connect = true)
+        test.connected()
+        openCard()
 
         compose.onNodeWithText("PHOTO").performClick()
         compose.onNodeWithText("COPY 1 TO PHONE").performClick()

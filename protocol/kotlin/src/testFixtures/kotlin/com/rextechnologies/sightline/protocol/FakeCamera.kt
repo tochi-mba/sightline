@@ -118,6 +118,9 @@ class FakeCamera : CameraTransport {
     /** When set, a download is answered with this refusal instead of the file. */
     var refuseDownloadWith: NakCode? = null
 
+    /** When set, every thumbnail is answered with this refusal instead of the picture. */
+    var refuseThumbnailsWith: NakCode? = null
+
     /** How many files to put on one page of the file list. */
     var pageSize = 4
 
@@ -325,7 +328,10 @@ class FakeCamera : CameraTransport {
 
             GpSockCommand.PlaybackGetThumbnail -> {
                 val pictured = find(payload)
-                if (pictured == null) {
+                val refused = refuseThumbnailsWith
+                if (refused != null) {
+                    nak(command, refused)
+                } else if (pictured == null) {
                     nak(command, NakCode.InvalidCommand)
                 } else {
                     ack(command, thumbnailOf(pictured))

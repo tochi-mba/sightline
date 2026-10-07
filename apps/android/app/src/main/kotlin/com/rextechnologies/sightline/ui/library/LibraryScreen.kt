@@ -57,9 +57,8 @@ import java.util.Locale
 /**
  * What is on the camera's card: thumbnails by day, newest first, to copy to the phone or delete.
  *
- * The camera lists its card only in browse mode, which ends its live picture until it is switched off
- * and on. So the card is read by itself when this screen opens only while that costs nothing; once the
- * picture has been seen, the screen says what reading the card will cost and waits to be asked.
+ * Reading the card pauses the live picture, because the camera cannot do both, so the card is read when
+ * this screen opens rather than in the background.
  */
 @Composable
 fun LibraryScreen(graph: AppGraph, camera: CameraState) {
@@ -68,7 +67,7 @@ fun LibraryScreen(graph: AppGraph, camera: CameraState) {
     var confirmDelete by remember { mutableStateOf(false) }
 
     LaunchedEffect(camera.isConnected) {
-        if (camera.isConnected && library.files == null && !camera.holdsLivePicture) {
+        if (camera.isConnected && library.files == null) {
             graph.controller.refreshLibrary()
         }
     }
@@ -88,14 +87,11 @@ fun LibraryScreen(graph: AppGraph, camera: CameraState) {
                 "No camera connected",
                 "Connect a camera to see what is on its card.",
             )
-            files == null && library.reading -> EmptyState("…", "Reading the card", "The camera is listing its files.")
-            files == null && camera.holdsLivePicture -> EmptyState(
-                "!",
-                "The card",
-                "Reading the card ends the live picture, which then needs the camera's battery taken out and " +
-                    "put back: it cannot show its picture and list its files at once.",
+            files == null -> EmptyState(
+                "…",
+                "Reading the card",
+                "The live picture pauses while the camera lists its files.",
             )
-            files == null -> EmptyState("…", "The card", "Read the card to see what is on it.")
             files.isEmpty() -> EmptyState(
                 "0",
                 "The card is empty",
@@ -115,7 +111,7 @@ fun LibraryScreen(graph: AppGraph, camera: CameraState) {
         ) {
             if (selected.isEmpty()) {
                 OutlineAction(
-                    text = if (files == null) "Read the card" else "Read the card again",
+                    text = "Read the card again",
                     onClick = { graph.controller.refreshLibrary() },
                     enabled = camera.isConnected && camera.task == null,
                     modifier = Modifier.weight(1f),

@@ -2,6 +2,8 @@ package com.rextechnologies.sightline.link
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.LinkAddress
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
@@ -14,6 +16,7 @@ import com.rextechnologies.sightline.core.link.CameraLinkException
 import com.rextechnologies.sightline.core.link.CameraNetwork
 import com.rextechnologies.sightline.core.link.LinkFailure
 import com.rextechnologies.sightline.protocol.TcpCameraTransport
+import com.rextechnologies.sightline.protocol.UdpCameraDatagrams
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -21,6 +24,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.shadows.ShadowNetwork
+import org.robolectric.util.ReflectionHelpers
+import org.robolectric.util.ReflectionHelpers.ClassParameter
+import java.io.IOException
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.SocketException
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -53,6 +63,13 @@ class AndroidCameraLinkTest {
             released += callback
             if (releaseFails) throw IllegalArgumentException("NetworkCallback was not registered")
         }
+
+        val socketsFor = mutableListOf<Network>()
+
+        override fun datagramSocket(network: Network): DatagramSocket {
+            socketsFor += network
+            return DatagramSocket(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0))
+        }
     }
 
     private val system = FakeSystem()
@@ -73,6 +90,78 @@ class AndroidCameraLinkTest {
         lease.close()
         lease.close()
         assertEquals(1, system.released.size)
+    }
+
+    @Test
+    fun `the lease's datagrams travel over the camera's network`() = runTest {
+        val joining = async { link.join(CameraNetwork()) }
+        runCurrent()
+        system.callback.onAvailable(network)
+        val lease = joining.await()
+
+        lease.datagrams().use { datagrams ->
+            assertIs<UdpCameraDatagrams>(datagrams)
+            assertTrue(datagrams.port > 0)
+        }
+
+        assertEquals(listOf(network), system.socketsFor)
+        lease.close()
+    }
+
+    @Test
+    fun `the real system binds a datagram socket to the camera's network and the phone's address there`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        shadowOf(connectivity).setLinkProperties(network, linkProperties("::1", "127.0.0.1"))
+
+        AndroidNetworkSystem(context).datagramSocket(network).use { socket ->
+            assertEquals(InetAddress.getByName("127.0.0.1"), socket.localAddress)
+            assertTrue(socket.localPort > 0)
+            assertTrue(shadowOf(network).isSocketBound(socket))
+        }
+    }
+
+    @Test
+    fun `the real system gives no datagram socket before the phone has an address on the camera's network`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        val real = AndroidNetworkSystem(context)
+
+        val unknown = assertFailsWith<IOException> { real.datagramSocket(network) }
+        shadowOf(connectivity).setLinkProperties(network, linkProperties("::1"))
+        assertFailsWith<IOException> { real.datagramSocket(network) }
+
+        assertEquals("The phone has no address on the camera's network yet.", unknown.message)
+    }
+
+    @Test
+    fun `a datagram socket that cannot be bound is closed and the reason passed on`() {
+        // 192.0.2.1 is reserved for documentation, so no machine has it to bind to.
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        shadowOf(connectivity).setLinkProperties(network, linkProperties("192.0.2.1"))
+
+        assertFailsWith<SocketException> { AndroidNetworkSystem(context).datagramSocket(network) }
+    }
+
+    /** Link properties with [addresses], made the only way an app's tests can: these constructors are hidden. */
+    private fun linkProperties(vararg addresses: String): LinkProperties {
+        val properties = LinkProperties()
+        for (address in addresses) {
+            val inet = InetAddress.getByName(address)
+            val link = ReflectionHelpers.callConstructor(
+                LinkAddress::class.java,
+                ClassParameter.from(InetAddress::class.java, inet),
+                ClassParameter.from(Int::class.java, if (inet.address.size == 4) 24 else 128),
+            )
+            ReflectionHelpers.callInstanceMethod<Boolean>(
+                properties,
+                "addLinkAddress",
+                ClassParameter.from(LinkAddress::class.java, link),
+            )
+        }
+
+        return properties
     }
 
     @Test

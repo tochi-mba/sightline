@@ -16,208 +16,129 @@ import com.rextechnologies.sightline.protocol.unsignedAt
 class CameraFrame(val jpeg: ByteArray, val rtpTimestamp: UInt, val width: Int, val height: Int)
 
 /**
- * Turns the camera's stream into pictures.
+ * Turns the camera's RTP packets, one datagram each, into pictures.
  *
- * Two things about this camera make a stock RTSP stack the wrong tool, and both are why this
- * class exists.
+ * RFC 2435 cuts each picture into fragments, each carrying its offset into the picture, and sets the
+ * marker bit on the last. A picture is handed on only when every fragment of it arrived in order: UDP
+ * drops a packet now and then, and a picture with a hole in it decodes as a smear, not a frame. One that
+ * lost a fragment is counted in [picturesDropped] and the next one is waited for.
  *
- * **There is no interleaved framing.** The camera answers a TCP transport request with
- * `interleaved=0-1` and then sends bare RTP packets down the connection, with none of the
- * `$`, channel and length bytes that RFC 2326 requires. A reader that looks for that framing
- * finds `$` bytes at random points inside JPEG data and produces nonsense. Packets are
- * instead split on the RTP header itself, anchored to the stream's own synchronisation source.
+ * **Each picture already carries its JFIF header.** RFC 2435 strips the quantisation and Huffman tables
+ * from the wire and expects the receiver to rebuild them; this camera leaves a complete JFIF document in
+ * the payload. So fragments are simply put together, and none of that reconstruction is needed or wanted.
  *
- * **Each frame already carries its JFIF header.** RFC 2435 strips the quantisation and Huffman
- * tables from the wire and expects the receiver to rebuild them; this camera leaves a complete
- * JFIF document in the payload. So fragments are simply concatenated, and none of that
- * reconstruction is needed or wanted.
+ * **Each picture is padded.** The camera follows a picture's end-of-image marker with up to seven zero
+ * bytes, to a multiple of eight. Those are not the picture, and are let go of.
+ *
+ * This is the port of the .NET `RtpJpegReassembler`, held to the same cases.
  */
 class RtpJpegReassembler {
-    private val stream = ByteQueue()
-    private val frame = ByteQueue()
-    private var synchronisationSource: Int? = null
-    private var currentTimestamp = 0u
+    private val picture = ByteQueue()
+    private var source: Int? = null
+    private var lastSequence: Int? = null
+    private var timestamp = 0
     private var width = 0
     private var height = 0
     private var building = false
-    private var lastSequence: Int? = null
 
-    /** How many packets have been read. */
+    /** How many RTP/JPEG packets have been taken. */
     var packetsRead: Int = 0
         private set
 
-    /** How many packets were dropped because the sequence number jumped. */
+    /** How many packets never arrived, going by the gaps in their sequence numbers. */
     var packetsLost: Int = 0
         private set
 
-    /** How many bytes are waiting for a packet to finish, which a desynchronised stream must not grow. */
-    internal val buffered: Int
-        get() = stream.size
+    /** How many pictures were thrown away because a fragment of them never arrived. */
+    var picturesDropped: Int = 0
+        private set
 
     /**
-     * Adds bytes from the connection and returns any pictures they completed.
+     * Takes one packet, and returns the picture it finished, if it finished one.
      *
-     * @param bytes Whatever the last read produced; boundaries do not matter.
+     * @param packet One datagram as it arrived, in its first [length] bytes. Anything that is not an
+     *   RTP/JPEG packet is ignored.
      */
-    fun push(bytes: ByteArray): List<CameraFrame> {
-        stream.append(bytes)
-        val finished = mutableListOf<CameraFrame>()
-
-        while (true) {
-            val start = findPacketStart(0)
-            if (start < 0) {
-                // Nothing usable yet. Keep a little context so a header split across two reads is
-                // still found, and drop the rest so a desynchronised stream cannot grow forever.
-                if (stream.size > 1 shl 20) {
-                    stream.removeFirst(stream.size - RTP_HEADER_LENGTH)
-                }
-
-                return finished
-            }
-
-            // The stream's sender is fixed by its first packet before that packet's end is looked for.
-            // Otherwise the end is found by accepting a header from anyone, and twelve bytes of
-            // picture data shaped like one cut the first packet short; the rest is then thrown away as
-            // noise and the first picture arrives without its start.
-            if (synchronisationSource == null) {
-                synchronisationSource = stream.array.readInt32BigEndian(start + 8)
-            }
-
-            val next = findPacketStart(start + RTP_HEADER_LENGTH)
-            if (next < 0) {
-                // The last packet in the buffer is only complete once the next one has begun, so
-                // wait rather than emitting a half-read fragment.
-                if (start > 0) {
-                    stream.removeFirst(start)
-                }
-
-                return finished
-            }
-
-            val packet = stream.copyOfRange(start, next)
-            stream.removeFirst(next)
-            consume(packet, finished)
-        }
-    }
-
-    /**
-     * Whether a packet begins at [offset], which the caller has checked leaves room for a header.
-     *
-     * A header from another synchronisation source is not a packet start. With no length on the wire
-     * such a packet cannot be cut out of the stream — its bytes stay inside the packet around them —
-     * but it can never start a picture or set a frame's size. The camera sends one source, since only
-     * the video track is set up, so this costs nothing in practice.
-     */
-    private fun isPacketStart(offset: Int): Boolean {
-        val bytes = stream.array
-
-        // Version 2, no padding, extension or contributing sources, and the JPEG payload type. The
-        // marker bit varies.
-        if (bytes.unsignedAt(offset) != 0x80 || (bytes.unsignedAt(offset + 1) and 0x7F) != JPEG_PAYLOAD_TYPE) {
-            return false
+    fun push(packet: ByteArray, length: Int = packet.size): CameraFrame? {
+        val found = findPayload(packet, length) ?: return null
+        packetsRead++
+        val ssrc = packet.readInt32BigEndian(8)
+        if (source != ssrc) {
+            // A new sender, or the same camera starting a new stream: nothing in hand belongs with it.
+            source = ssrc
+            lastSequence = null
+            abandon(counted = false)
         }
 
-        val source = synchronisationSource
-        return source == null || bytes.readInt32BigEndian(offset + 8) == source
-    }
-
-    private fun findPacketStart(from: Int): Int {
-        var offset = from
-        while (offset + RTP_HEADER_LENGTH <= stream.size) {
-            if (isPacketStart(offset)) {
-                return offset
-            }
-            offset++
-        }
-
-        return -1
-    }
-
-    /**
-     * Takes one packet, adding any pictures it finished to [finished].
-     *
-     * A single packet can finish two pictures: its fragment offset of zero ends the one before it,
-     * and its marker bit ends its own. That happens whenever a picture fits in one packet.
-     */
-    private fun consume(packet: ByteArray, finished: MutableList<CameraFrame>) {
-        if (packet.size < RTP_HEADER_LENGTH + JPEG_HEADER_LENGTH) {
-            return
-        }
-
-        val marker = (packet.unsignedAt(1) and 0x80) != 0
         val sequence = packet.readUInt16BigEndian(2)
-        val previous = lastSequence
-        if (previous != null && ((previous + 1) and 0xFFFF) != sequence) {
-            packetsLost++
+        lastSequence?.let { previous ->
+            val gap = (sequence - previous - 1) and 0xFFFF
+            if (gap in 1 until 0x8000) {
+                packetsLost += gap
+            }
         }
 
         lastSequence = sequence
-        packetsRead++
+        val marker = (packet.unsignedAt(1) and 0x80) != 0
+        val stamp = packet.readInt32BigEndian(4)
+        val header = found.header
+        val offset = (packet.unsignedAt(header + 1) shl 16) or
+            (packet.unsignedAt(header + 2) shl 8) or
+            packet.unsignedAt(header + 3)
 
-        val timestamp = packet.readInt32BigEndian(4).toUInt()
-
-        // RFC 2435: type-specific, a 24-bit fragment offset, type, Q, then width and height in
-        // units of eight pixels. A packet start has no contributing sources, so this header always
-        // follows the fixed RTP header directly.
-        val jpegHeader = RTP_HEADER_LENGTH
-        val fragmentOffset = (packet.unsignedAt(jpegHeader + 1) shl 16) or
-            (packet.unsignedAt(jpegHeader + 2) shl 8) or
-            packet.unsignedAt(jpegHeader + 3)
-        val quantisation = packet.unsignedAt(jpegHeader + 5)
-        var payload = jpegHeader + JPEG_HEADER_LENGTH
-
-        if (quantisation >= 128 && fragmentOffset == 0 && packet.size >= payload + 4) {
-            // Tables are inline. This camera does not use them — it sends a whole JFIF header
-            // instead — but skipping them correctly costs one line and keeps this honest RFC 2435.
-            val tableLength = packet.readUInt16BigEndian(payload + 2)
-            payload += 4 + tableLength
-        }
-
-        if (payload > packet.size) {
-            return
-        }
-
-        if (fragmentOffset == 0) {
-            // A new picture starts. Anything still being built belongs to the one before it, which
-            // is how a camera that never sets the marker bit still produces frames.
-            if (building && frame.size > 0) {
-                finished += finish()
-            }
-
-            frame.clear()
+        if (offset == 0) {
+            // A picture starts. One still being put together never got its last fragment.
+            abandon(counted = true)
             building = true
-            currentTimestamp = timestamp
-            width = packet.unsignedAt(jpegHeader + 6) * 8
-            height = packet.unsignedAt(jpegHeader + 7) * 8
+            timestamp = stamp
+            width = packet.unsignedAt(header + 6) * 8
+            height = packet.unsignedAt(header + 7) * 8
+        } else if (!building) {
+            // Joined part-way through a picture, or after one was abandoned: wait for the next.
+            return null
+        } else if (offset != picture.size || stamp != timestamp) {
+            // A fragment before this one never arrived.
+            abandon(counted = true)
+            return null
         }
 
-        if (!building) {
-            // Joined the stream mid-picture. Those fragments can never make a whole file, so they
-            // are dropped rather than written out as a broken one.
-            return
+        picture.append(packet, found.start, found.end - found.start)
+        if (!marker) {
+            return null
         }
 
-        frame.append(packet, payload, packet.size - payload)
-
-        if (marker) {
-            // RFC 2435 marks the last packet of a picture, which is what lets a frame be delivered
-            // as soon as it is whole rather than when the next one begins.
-            finished += finish()
-            frame.clear()
-            building = false
-        }
+        val finished = CameraFrame(withoutPadding(picture.toByteArray()), timestamp.toUInt(), width, height)
+        picture.clear()
+        building = false
+        return finished
     }
 
-    private fun finish(): CameraFrame {
-        var jpeg = frame.toByteArray()
-        // The camera ends its frames properly, but a dropped last fragment would otherwise produce
-        // a file no decoder will open.
-        if (jpeg.size < 2 || jpeg.unsignedAt(jpeg.size - 2) != 0xFF || jpeg.unsignedAt(jpeg.size - 1) != 0xD9) {
-            jpeg += END_OF_IMAGE
+    /**
+     * The picture without the zeros that follow its end-of-image marker. Zeros with no marker before them
+     * are kept: they could be the picture's own, and a picture with no end is judged on its own.
+     */
+    private fun withoutPadding(picture: ByteArray): ByteArray {
+        var end = picture.size
+        while (end > 0 && picture[end - 1].toInt() == 0) {
+            end--
         }
 
-        return CameraFrame(jpeg, currentTimestamp, width, height)
+        val ended = end >= 2 && picture.unsignedAt(end - 2) == 0xFF && picture.unsignedAt(end - 1) == 0xD9
+        return if (ended) picture.copyOf(end) else picture
     }
+
+    /** Lets go of any picture being put together, counting it as dropped when asked to. */
+    private fun abandon(counted: Boolean) {
+        if (building && counted) {
+            picturesDropped++
+        }
+
+        picture.clear()
+        building = false
+    }
+
+    /** Where in a packet its JPEG header starts, and where the picture's bytes start and end. */
+    private class Payload(val header: Int, val start: Int, val end: Int)
 
     companion object {
         /** The RTP payload type RFC 2435 assigns to JPEG. */
@@ -225,7 +146,7 @@ class RtpJpegReassembler {
 
         private const val RTP_HEADER_LENGTH = 12
         private const val JPEG_HEADER_LENGTH = 8
-        private val END_OF_IMAGE = byteArrayOf(0xFF.toByte(), 0xD9.toByte())
+        private const val RESTART_HEADER_LENGTH = 4
 
         /** Whether a block of bytes looks like a complete JPEG. */
         fun looksLikeJpeg(bytes: ByteArray): Boolean =
@@ -235,5 +156,62 @@ class RtpJpegReassembler {
                 bytes.unsignedAt(2) == 0xFF &&
                 bytes.unsignedAt(bytes.size - 2) == 0xFF &&
                 bytes.unsignedAt(bytes.size - 1) == 0xD9
+
+        /**
+         * Finds the picture's bytes in a packet: after the RTP header with any contributing sources and
+         * extension, the JPEG header, any restart header and any inline tables, and before any padding.
+         *
+         * @return Null for anything that is not a well-formed RTP/JPEG packet.
+         */
+        private fun findPayload(packet: ByteArray, length: Int): Payload? {
+            if (length < RTP_HEADER_LENGTH ||
+                (packet.unsignedAt(0) shr 6) != 2 ||
+                (packet.unsignedAt(1) and 0x7F) != JPEG_PAYLOAD_TYPE
+            ) {
+                return null
+            }
+
+            var end = length
+            if ((packet.unsignedAt(0) and 0x20) != 0) {
+                // Padding: its last byte says how much there is.
+                end -= packet.unsignedAt(length - 1)
+            }
+
+            var at = RTP_HEADER_LENGTH + 4 * (packet.unsignedAt(0) and 0x0F)
+            if ((packet.unsignedAt(0) and 0x10) != 0) {
+                if (at + 4 > end) {
+                    return null
+                }
+
+                at += 4 + 4 * packet.readUInt16BigEndian(at + 2)
+            }
+
+            // RFC 2435: type-specific, a 24-bit fragment offset, type, Q, then width and height in eights.
+            if (at + JPEG_HEADER_LENGTH > end) {
+                return null
+            }
+
+            val header = at
+            val type = packet.unsignedAt(at + 4)
+            val quality = packet.unsignedAt(at + 5)
+            val fragmentStart = packet.unsignedAt(at + 1) == 0 && packet.unsignedAt(at + 2) == 0 &&
+                packet.unsignedAt(at + 3) == 0
+            at += JPEG_HEADER_LENGTH
+            if (type >= 64) {
+                at += RESTART_HEADER_LENGTH
+            }
+
+            if (quality >= 128 && fragmentStart) {
+                // Tables inline. This camera sends a whole JFIF header instead, but skipping them correctly
+                // costs a few lines and keeps this honest RFC 2435.
+                if (at + 4 > end) {
+                    return null
+                }
+
+                at += 4 + packet.readUInt16BigEndian(at + 2)
+            }
+
+            return if (at <= end) Payload(header, at, end) else null
+        }
     }
 }
