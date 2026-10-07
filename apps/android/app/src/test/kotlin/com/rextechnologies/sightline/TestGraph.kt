@@ -148,6 +148,8 @@ class TestGraph(
     releaseNotes: List<WhatsNewEntry> = emptyList(),
     /** What the update check is answered with; offline unless a test says otherwise. */
     var answer: () -> String = { throw java.io.IOException("offline") },
+    /** The clock the graph keeps time by: the main thread's own, unless a test stops it. */
+    timeSource: kotlin.time.TimeSource = LooperTime,
 ) {
     val link = FakeLink(camera)
     val graph = AppGraph(
@@ -162,7 +164,8 @@ class TestGraph(
         releaseNotes = releaseNotes,
         fetch = { answer() },
         io = kotlinx.coroutines.Dispatchers.Unconfined,
-        timeSource = LooperTime,
+        timeSource = timeSource,
+        decoding = kotlinx.coroutines.Dispatchers.Unconfined,
     )
 
     /** Runs the main thread's queue, then [duration] of its clock: the controller lives there. */

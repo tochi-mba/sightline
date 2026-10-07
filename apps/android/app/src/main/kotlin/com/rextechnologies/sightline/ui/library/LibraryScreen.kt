@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -62,6 +63,12 @@ import java.util.Locale
  */
 @Composable
 fun LibraryScreen(graph: AppGraph, camera: CameraState) {
+    val playing by graph.playing.collectAsState()
+    playing?.let {
+        PlayerScreen(it, onClose = graph::stopPlaying)
+        return
+    }
+
     val library = camera.library
     var selected by remember { mutableStateOf(emptySet<CameraFile>()) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -117,6 +124,16 @@ fun LibraryScreen(graph: AppGraph, camera: CameraState) {
                     modifier = Modifier.weight(1f),
                 )
             } else {
+                selected.singleOrNull()?.takeIf { it.isVideo }?.let { video ->
+                    OutlineAction(
+                        text = "Play",
+                        onClick = {
+                            graph.play(video)
+                            selected = emptySet()
+                        },
+                        enabled = camera.task == null,
+                    )
+                }
                 SignalButton(
                     text = "Copy ${selected.size} to phone",
                     onClick = {

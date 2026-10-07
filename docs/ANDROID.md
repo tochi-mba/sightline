@@ -46,6 +46,11 @@ connections ask for exactly that camera, which Android grants without asking aga
   that off.
 - A download is recognised from its first bytes, written pending, and published only once whole; a full
   phone fails the file without being taken for a lost camera.
+- A video plays while it is still coming off the card. The camera's own playback command takes it off
+  Wi-Fi (ACCEPTANCE C17), so the clip is fetched into the app's cache instead and read as it grows, and
+  playing starts once the rest will arrive a second before it is needed. A clip played before plays from
+  the cache, with the camera or without it. The session that plays it lives in the graph, so turning the
+  phone does not end it; leaving the card's page or closing the player does, and stops the fetch.
 
 The controller lives in the app's graph, not in a screen, so a recording or Sentry's watch survives the
 screen turning off. A connected-device foreground service keeps the process alive while a camera is
@@ -104,4 +109,5 @@ dated in `docs/ACCEPTANCE.md`, no claim about the phone is made. In particular:
 - whether joining by exact name connects with no dialog on the reference phone;
 - whether the camera gives thumbnails after a stream has been started and stopped;
 - the frame rate and latency of the live picture on a phone;
+- playing a clip from the card on a phone, and its sound through AudioTrack;
 - Sentry's sensitivity against a real scene.

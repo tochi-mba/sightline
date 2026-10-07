@@ -1,11 +1,15 @@
 package com.rextechnologies.sightline
 
 import android.content.Context
+import android.graphics.Bitmap
 import com.rextechnologies.sightline.core.camera.CameraController
 import com.rextechnologies.sightline.core.library.MediaSink
 import com.rextechnologies.sightline.core.link.CameraLink
 import com.rextechnologies.sightline.core.link.CameraNetwork
 import com.rextechnologies.sightline.core.link.PhoneNetworks
+import com.rextechnologies.sightline.core.playback.ClipCache
+import com.rextechnologies.sightline.core.playback.ClipSession
+import com.rextechnologies.sightline.core.playback.SoundDevice
 import com.rextechnologies.sightline.core.sentry.SentryActions
 import com.rextechnologies.sightline.core.sentry.SentryRunner
 import com.rextechnologies.sightline.core.settings.AppSettings
@@ -20,6 +24,10 @@ import com.rextechnologies.sightline.library.GallerySink
 import com.rextechnologies.sightline.link.AndroidCameraLink
 import com.rextechnologies.sightline.link.AndroidNetworkSystem
 import com.rextechnologies.sightline.link.PhoneNetworkReader
+import com.rextechnologies.sightline.live.FrameDecoder
+import com.rextechnologies.sightline.playback.AudioTrackDevice
+import com.rextechnologies.sightline.protocol.gpsock.CameraFile
+import com.rextechnologies.sightline.protocol.media.AviSound
 import com.rextechnologies.sightline.sentry.AndroidSentryActions
 import com.rextechnologies.sightline.sentry.LumaSampler
 import com.rextechnologies.sightline.settings.PreferencesStore
@@ -37,6 +45,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import kotlin.time.TimeSource
 
 /**
@@ -66,8 +75,14 @@ class AppGraph(
     private val fetch: (String) -> String = ::httpGet,
     /** Where blocking work runs: the update check's request. */
     private val io: CoroutineDispatcher = Dispatchers.IO,
-    /** The clock frame rates and Sentry's timings are measured on. */
-    timeSource: TimeSource = TimeSource.Monotonic,
+    /** The clock frame rates, Sentry's timings and clips' playing are measured on. */
+    private val timeSource: TimeSource = TimeSource.Monotonic,
+    /** Clips played from the card, kept in the app's cache so they play again without the camera. */
+    val clips: ClipCache = ClipCache(File(context.cacheDir, "clips")),
+    /** Opens the phone's sound for a clip's, or says there is none. */
+    private val openSound: (AviSound) -> SoundDevice? = AudioTrackDevice::open,
+    /** Where a clip's pictures are decoded, away from the main thread. */
+    private val decoding: CoroutineDispatcher = Dispatchers.Default,
 ) {
     val settings = Settings(store)
     val controller = CameraController(
@@ -78,6 +93,13 @@ class AppGraph(
     )
 
     private val newer = MutableStateFlow<Release?>(null)
+    private val clip = MutableStateFlow<ClipSession<Bitmap>?>(null)
+
+    /**
+     * The clip from the card playing, while one is. Held here rather than by a screen, so turning the phone does
+     * not end it.
+     */
+    val playing: StateFlow<ClipSession<Bitmap>?> = clip.asStateFlow()
 
     /** A newer release than this one, once the update check has found one. */
     val update: StateFlow<Release?> = newer.asStateFlow()
@@ -107,6 +129,28 @@ class AppGraph(
             newer.value =
                 withContext(io) { runCatching { UpdateCheck.newer(fetch(UpdateCheck.LATEST), version) }.getOrNull() }
         }
+    }
+
+    /**
+     * Plays [file], a video on the card: from the phone when it was played before, otherwise as it comes off the
+     * card. Nothing happens when it can do neither, and the camera's notice says why.
+     */
+    fun play(file: CameraFile) {
+        val started = controller.play(file, clips) ?: return
+        stopPlaying()
+        val began = timeSource.markNow()
+        clip.value = ClipSession(started, scope, { began.elapsedNow() }, FrameDecoder()::decode, decoding, openSound)
+    }
+
+    /** Closes the clip playing, which stops fetching it if it still is. */
+    fun stopPlaying() {
+        clip.value?.close()
+        clip.value = null
+    }
+
+    /** Pauses the clip playing, if one is: the app is out of sight. */
+    fun pausePlaying() {
+        clip.value?.pause()
     }
 
     /** What the phone's networks are doing now, for the sentence shown before connecting. */

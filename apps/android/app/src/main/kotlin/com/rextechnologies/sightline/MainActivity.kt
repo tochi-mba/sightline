@@ -44,6 +44,12 @@ class MainActivity : ComponentActivity(), Platform {
         setContent { RexTheme { SightlineApp(graph, this) } }
     }
 
+    override fun onStop() {
+        super.onStop()
+        // A clip playing is paused while the app is out of sight, and its sound with it.
+        (application as SightlineApplication).graph.pausePlaying()
+    }
+
     override fun withNearbyPermission(then: () -> Unit) {
         // Android 13 split nearby Wi-Fi from location; before it, joining a camera by name needs neither.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

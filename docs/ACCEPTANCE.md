@@ -73,6 +73,7 @@ phone and a WireGuard VPN.
 | V2 | A clip played before plays again from this PC alone | 2026-10-07 | Pass: whole in 0.08 seconds, with nothing asked of the camera |
 | V3 | Closing a clip part-way stops its fetch, and the camera carries on | 2026-10-07 | Pass: let go at 3.4 MB, it stopped in 0.07 seconds and left nothing in the cache; the card was read straight after and the live picture came back. The PC's internet answered afterwards |
 | V4 | A clip coming off the card slower than it plays starts late enough never to stop and wait | 2026-10-07 | Pass once judged in bytes: the 3.9-second clip started 8.9 seconds into a 13.1-second fetch, and a 41.7-second one (71.7 MB at 872 KB/s, half the speed it plays) 40.4 seconds into an 82-second fetch, its wait counted down as it came; neither stopped again. Judged in seconds of clip, which are ready only a run of sound at a time, the same short clip had stopped once (V1) |
+| V5 | The Android app plays a clip off the card as it arrives, with its sound | | |
 
 ## Command line
 

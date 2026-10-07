@@ -19,6 +19,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowActivity
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @RunWith(AndroidJUnit4::class)
@@ -155,6 +156,15 @@ class MainActivityTest {
         assertTrue(activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
         activity.keepScreenOn(false)
         assertFalse(activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON != 0)
+    }
+
+    @Test
+    fun `out of sight, a clip playing is paused`() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+
+        controller.stop()
+
+        assertNull((controller.get().application as SightlineApplication).graph.playing.value)
     }
 
     @Test

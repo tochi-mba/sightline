@@ -146,6 +146,13 @@ private fun Places(graph: AppGraph, platform: Platform) {
         }
     }
 
+    LaunchedEffect(stack.current) {
+        // A clip plays on the card's page: going anywhere else ends it, so nothing plays out of sight.
+        if (stack.current != Destination.Library) {
+            graph.stopPlaying()
+        }
+    }
+
     BackHandler(enabled = stack.canGoBack) {
         (stack.pop() as? Back.To)?.let { go(it.stack) }
     }

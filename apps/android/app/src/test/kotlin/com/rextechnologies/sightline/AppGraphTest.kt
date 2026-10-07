@@ -4,14 +4,27 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.rextechnologies.sightline.core.link.CameraNetwork
+import com.rextechnologies.sightline.core.playback.PlayerPhase
 import com.rextechnologies.sightline.core.settings.AppSettings
+import com.rextechnologies.sightline.protocol.FakeClip
+import com.rextechnologies.sightline.protocol.gpsock.CameraFile
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.time.Duration
+import java.time.LocalDateTime
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNotSame
+import kotlin.test.assertNull
 import kotlin.test.assertSame
 
 @RunWith(AndroidJUnit4::class)
 class AppGraphTest {
+    /** Four of the phone's own pictures at four a second, with half a second of sound after every two. */
+    private fun clip() = FakeClip.reference(List(4) { TestGraph.picture() }, List(2) { ByteArray(16_000) })
+        .copy(microsPerFrame = 250_000, rate = 4, picturesPerSound = 2)
+        .build()
+
     @Test
     fun `the camera asked for is any of the family until one has said its name, then exactly that one`() {
         val test = TestGraph()
@@ -32,6 +45,45 @@ class AppGraphTest {
         assertEquals("my-camera-pass", test.graph.cameraNetwork().password)
         test.graph.settings.reset(AppSettings.CameraPassword)
         assertEquals(CameraNetwork.DEFAULT_PASSWORD, test.graph.cameraNetwork().password)
+    }
+
+    @Test
+    fun `a clip from the card plays, pauses out of sight, and stops when closed`() {
+        val test = TestGraph()
+        test.camera.addFile('A', LocalDateTime.of(2026, 10, 4, 18, 35, 56), clip())
+        test.connected()
+        test.graph.controller.refreshLibrary()
+        test.until { it.library.files != null && it.task == null }
+        val video = test.graph.controller.state.value.library.files!!.single()
+
+        test.graph.play(video)
+        val first = assertNotNull(test.graph.playing.value)
+        repeat(50) { if (first.view.value.picture == null) test.settle(Duration.ofMillis(100)) }
+        assertNotNull(first.view.value.picture)
+        test.until { it.task == null }
+
+        // Played again while it plays, from the phone this time: the first is closed for the second.
+        test.graph.play(video)
+        val second = assertNotNull(test.graph.playing.value)
+        assertNotSame(first, second)
+        repeat(50) { if (second.view.value.phase != PlayerPhase.Playing) test.settle(Duration.ofMillis(100)) }
+        test.graph.pausePlaying()
+        assertEquals(PlayerPhase.Paused, second.view.value.phase)
+
+        test.graph.stopPlaying()
+        assertNull(test.graph.playing.value)
+    }
+
+    @Test
+    fun `with no camera a clip never played before does not play, and there is nothing to pause or stop`() {
+        val test = TestGraph()
+
+        test.graph.play(CameraFile('A', 1, null, 40))
+        test.graph.pausePlaying()
+        test.graph.stopPlaying()
+
+        assertNull(test.graph.playing.value)
+        assertEquals("Connect to the camera first.", test.graph.controller.state.value.notice?.text)
     }
 
     @Test
