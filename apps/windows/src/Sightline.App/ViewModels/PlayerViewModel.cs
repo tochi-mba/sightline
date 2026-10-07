@@ -48,7 +48,7 @@ public sealed partial class PlayerViewModel : ObservableObject, IDisposable
         this.close = close ?? throw new ArgumentNullException(nameof(close));
         var clock = parts.Clock ?? TimeProvider.System;
         var start = clock.GetTimestamp();
-        player = new ClipPlayer(clip.Reader, () => clock.GetElapsedTime(start));
+        player = new ClipPlayer(clip.Reader, clip.File.ApproximateBytes, () => clock.GetElapsedTime(start));
         Title = clip.File.DisplayName;
         timer = new DispatcherTimer(Interval, DispatcherPriority.Background, (_, _) => Tick());
         timer.Start();

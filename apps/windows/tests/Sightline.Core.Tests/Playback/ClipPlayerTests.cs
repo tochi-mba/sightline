@@ -61,7 +61,7 @@ public sealed class ClipPlayerTests
         // Two-thirds as fast as it plays, as a 1080p clip comes off the card.
         var file = Clip(runs: 12);
         var reader = new ClipReader();
-        var player = Player(reader);
+        var player = Player(reader, file.Length);
         var sent = Feed(reader, file, upTo: 0);
 
         for (var tick = 1; tick <= 120; tick++)
@@ -75,11 +75,46 @@ public sealed class ClipPlayerTests
             }
         }
 
-        // Six seconds of clip arriving at two-thirds speed: about two seconds must be ready first.
+        // Six seconds of clip arriving in nine: the last of it is due at nine, a second before it is needed if
+        // playing starts at four, by when two and a half seconds are ready.
         player.Phase.ShouldBe(PlayerPhase.Playing);
-        reader.Ready.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(1.5));
+        clock.TotalSeconds.ShouldBe(4, tolerance: 0.15);
+        reader.Ready.ShouldBe(TimeSpan.FromSeconds(2.5));
         reader.IsComplete.ShouldBeFalse();
         sent.ShouldBeLessThan(file.Length);
+    }
+
+    [Fact]
+    public void A_clip_arriving_at_a_third_of_its_speed_starts_late_enough_never_to_wait_again()
+    {
+        // As the reference camera sent a 1080p clip (ACCEPTANCE V1): bytes steadily, at a third of the speed it
+        // plays, and so ready in steps of a whole run of sound at a time. Stepped as the window's timer steps it.
+        var file = Clip(runs: 12);
+        var reader = new ClipReader();
+        var player = Player(reader, file.Length);
+        var waitedAgain = 0;
+        var started = TimeSpan.Zero;
+        for (var tick = 0; tick <= 1500 && player.Phase != PlayerPhase.Ended; tick++)
+        {
+            clock = TimeSpan.FromSeconds(tick * 0.03);
+            Feed(reader, file, upTo: (int)(file.Length * Math.Min(1, clock.TotalSeconds / 18)));
+            var before = player.Phase;
+            player.Step();
+            if (before == PlayerPhase.Waiting && player.Phase == PlayerPhase.Playing && started == TimeSpan.Zero)
+            {
+                started = clock;
+            }
+
+            if (before == PlayerPhase.Playing && player.Phase == PlayerPhase.Waiting)
+            {
+                waitedAgain++;
+            }
+        }
+
+        player.Phase.ShouldBe(PlayerPhase.Ended);
+        waitedAgain.ShouldBe(0);
+        // The last of it arrives at 18 seconds and it plays for six, so it cannot start before 12.
+        started.ShouldBeGreaterThanOrEqualTo(TimeSpan.FromSeconds(12));
     }
 
     [Fact]
@@ -87,7 +122,7 @@ public sealed class ClipPlayerTests
     {
         var file = Clip(runs: 12);
         var reader = new ClipReader();
-        var player = Player(reader);
+        var player = Player(reader, file.Length);
         Feed(reader, file, upTo: file.Length / 8);
         player.Step();
         player.StartsIn.ShouldBeNull();
@@ -96,8 +131,9 @@ public sealed class ClipPlayerTests
         Feed(reader, file, upTo: file.Length / 4);
         player.Step();
 
+        // An eighth of it in a second and a half: the rest takes nine seconds, and six of clip play in six.
         player.Phase.ShouldBe(PlayerPhase.Waiting);
-        player.StartsIn!.Value.ShouldBeGreaterThan(TimeSpan.Zero);
+        player.StartsIn!.Value.TotalSeconds.ShouldBe(4, tolerance: 0.001);
     }
 
     [Fact]
@@ -105,11 +141,11 @@ public sealed class ClipPlayerTests
     {
         var file = Clip(runs: 4);
         var reader = new ClipReader();
-        var player = Player(reader, lead: TimeSpan.FromSeconds(0.5));
+        var player = Player(reader, file.Length, lead: TimeSpan.FromSeconds(0.5));
         Feed(reader, file, upTo: file.Length / 2);
         player.Step();
         Turn(2);
-        Feed(reader, file, upTo: file.Length * 3 / 4);
+        Feed(reader, file, upTo: file.Length * 7 / 8);
         player.Step();
         player.Phase.ShouldBe(PlayerPhase.Playing);
 
@@ -175,7 +211,7 @@ public sealed class ClipPlayerTests
     {
         var file = Clip(runs: 12);
         var reader = new ClipReader();
-        var player = Player(reader);
+        var player = Player(reader, file.Length);
         Feed(reader, file, upTo: file.Length / 8);
         player.Step();
 
@@ -241,7 +277,7 @@ public sealed class ClipPlayerTests
         // Arriving as fast as it plays, so playing starts with a second of it ready.
         var file = Clip(runs: 6);
         var reader = new ClipReader();
-        var player = Player(reader, lead: TimeSpan.FromSeconds(0.5));
+        var player = Player(reader, file.Length, lead: TimeSpan.FromSeconds(0.5));
         Feed(reader, file, upTo: file.Length / 3);
         player.Step();
         Turn(1);
@@ -262,11 +298,36 @@ public sealed class ClipPlayerTests
     }
 
     [Fact]
-    public void A_player_needs_a_clip_and_a_clock()
+    public void A_clip_coming_fast_still_waits_until_a_lead_of_it_is_ready()
     {
-        Should.Throw<ArgumentNullException>(() => new ClipPlayer(null!, () => TimeSpan.Zero));
-        Should.Throw<ArgumentNullException>(() => new ClipPlayer(new ClipReader(), null!));
-        new ClipPlayer(new ClipReader(), () => TimeSpan.Zero).Duration.ShouldBe(TimeSpan.Zero);
+        // Ready half a second in, with most of the next run of sound in but not all of it: fast enough that the
+        // rest is in time, and still too little ready to start on.
+        var file = Clip(runs: 12);
+        var reader = new ClipReader();
+        var player = Player(reader, file.Length, lead: TimeSpan.FromSeconds(0.6));
+        player.Step();
+        var sent = 0;
+        while (reader.Ready < TimeSpan.FromSeconds(0.5))
+        {
+            sent = Feed(reader, file, upTo: sent + 100);
+        }
+
+        Feed(reader, file, upTo: sent + 16_000);
+        Turn(1);
+        player.Step();
+
+        player.Phase.ShouldBe(PlayerPhase.Waiting);
+        player.StartsIn.ShouldBeNull();
+        reader.Ready.ShouldBe(TimeSpan.FromSeconds(0.5));
+    }
+
+    [Fact]
+    public void A_player_needs_a_clip_its_length_and_a_clock()
+    {
+        Should.Throw<ArgumentNullException>(() => new ClipPlayer(null!, 0, () => TimeSpan.Zero));
+        Should.Throw<ArgumentOutOfRangeException>(() => new ClipPlayer(new ClipReader(), -1, () => TimeSpan.Zero));
+        Should.Throw<ArgumentNullException>(() => new ClipPlayer(new ClipReader(), 0, null!));
+        new ClipPlayer(new ClipReader(), 0, () => TimeSpan.Zero).Duration.ShouldBe(TimeSpan.Zero);
     }
 
     /// <summary>
@@ -305,7 +366,11 @@ public sealed class ClipPlayerTests
         return Math.Max(from, upTo);
     }
 
-    private ClipPlayer Player(ClipReader reader, TimeSpan? lead = null) => new(reader, () => clock, lead);
+    /// <summary>A player for a clip that has all arrived.</summary>
+    private ClipPlayer Player(ClipReader reader) => new(reader, reader.BytesRead, () => clock);
+
+    /// <summary>A player for a clip of <paramref name="length"/> bytes, arriving.</summary>
+    private ClipPlayer Player(ClipReader reader, long length, TimeSpan? lead = null) => new(reader, length, () => clock, lead);
 
     private void Turn(double seconds) => clock += TimeSpan.FromSeconds(seconds);
 }

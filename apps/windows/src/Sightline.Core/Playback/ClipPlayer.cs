@@ -28,10 +28,12 @@ public readonly record struct PlayerStep(TimedPicture? Picture, IReadOnlyList<So
 /// </summary>
 /// <remarks>
 /// <para>
-/// The card is slower than the clip: a 1080p clip comes off it at about two-thirds of the speed it plays at
-/// (measured 2026-10-07). So playing starts only once enough has arrived that the rest will arrive before it
-/// is needed, judged from how fast the clip has been arriving; until then the first picture shows and the wait
-/// is said. If the download falls behind all the same, the player waits rather than skips.
+/// The card is slower than the clip: a 1080p clip comes off it at a third to two-thirds of the speed it plays
+/// at (measured 2026-10-07). So playing starts only once the rest will arrive a little before it is needed;
+/// until then the first picture shows and the wait is said. That is judged in bytes, from how fast they have
+/// been coming and how many the clip has: they come steadily, where the clip is ready only a whole run of sound
+/// at a time, which would make a judgement in seconds of clip hopeful just after each run. If the download falls
+/// behind all the same, the player waits rather than skips.
 /// </para>
 /// <para>
 /// It does nothing by itself: whatever shows the clip calls <see cref="Step"/> on a timer, and the clock is
@@ -40,7 +42,8 @@ public readonly record struct PlayerStep(TimedPicture? Picture, IReadOnlyList<So
 /// </remarks>
 public sealed class ClipPlayer
 {
-    // How much of the clip must be ready ahead of where it plays before playing starts, whatever the arithmetic says.
+    // How much of the clip must be ready ahead of where it plays before playing starts, and how long before it is
+    // needed the last of it must be judged to arrive.
     private static readonly TimeSpan DefaultLead = TimeSpan.FromSeconds(1);
 
     // How far back the rate the clip arrives at is judged over, and how much of that is needed to judge it at all.
@@ -48,9 +51,10 @@ public sealed class ClipPlayer
     private static readonly TimeSpan RateNeeds = TimeSpan.FromSeconds(1);
 
     private readonly ClipReader clip;
+    private readonly long length;
     private readonly Func<TimeSpan> now;
     private readonly TimeSpan lead;
-    private readonly Queue<(TimeSpan Wall, TimeSpan Ready)> arrivals = new();
+    private readonly Queue<(TimeSpan Wall, long Bytes)> arrivals = new();
     private TimeSpan position;
     private TimeSpan startedAt;
     private TimeSpan startedFrom;
@@ -61,11 +65,17 @@ public sealed class ClipPlayer
 
     /// <summary>A player for <paramref name="clip"/>, on the clock <paramref name="now"/>.</summary>
     /// <param name="clip">The clip, arriving.</param>
+    /// <param name="length">How many bytes the whole clip has, as the card lists it.</param>
     /// <param name="now">The time on a clock that only goes forward.</param>
-    /// <param name="lead">How much must be ready ahead before playing starts; a second when omitted.</param>
-    public ClipPlayer(ClipReader clip, Func<TimeSpan> now, TimeSpan? lead = null)
+    /// <param name="lead">
+    /// How much must be ready ahead before playing starts, and how long before it is needed the last of the clip
+    /// must be due; a second when omitted.
+    /// </param>
+    public ClipPlayer(ClipReader clip, long length, Func<TimeSpan> now, TimeSpan? lead = null)
     {
         this.clip = clip ?? throw new ArgumentNullException(nameof(clip));
+        ArgumentOutOfRangeException.ThrowIfNegative(length);
+        this.length = length;
         this.now = now ?? throw new ArgumentNullException(nameof(now));
         this.lead = lead ?? DefaultLead;
     }
@@ -181,10 +191,10 @@ public sealed class ClipPlayer
 
     private TimeSpan Playhead(TimeSpan wall) => startedFrom + (wall - startedAt);
 
-    /// <summary>Notes how far the clip has arrived by now, keeping the last few seconds of that.</summary>
+    /// <summary>Notes how much of the clip has arrived by now, keeping the last few seconds of that.</summary>
     private void Measure(TimeSpan wall)
     {
-        arrivals.Enqueue((wall, clip.Ready));
+        arrivals.Enqueue((wall, clip.BytesRead));
         while (arrivals.Count > 2 && wall - arrivals.Peek().Wall > RateWindow)
         {
             arrivals.Dequeue();
@@ -192,8 +202,8 @@ public sealed class ClipPlayer
     }
 
     /// <summary>
-    /// Whether playing can start from where the player is: the whole clip is here, or enough is ready ahead that
-    /// the rest will arrive, at the rate it has been arriving, before it is needed.
+    /// Whether playing can start from where the player is: the whole clip is here, or, at the rate its bytes have
+    /// been coming, the last of them will be here a lead before the clip reaches them, with a lead ready already.
     /// </summary>
     private bool CanPlay(TimeSpan wall)
     {
@@ -208,24 +218,28 @@ public sealed class ClipPlayer
             return true;
         }
 
-        var ahead = clip.Ready - position;
-        var (firstWall, firstReady) = arrivals.Peek();
+        var (firstWall, firstBytes) = arrivals.Peek();
         var watched = wall - firstWall;
         if (watched < RateNeeds)
         {
             return false;
         }
 
-        // Seconds of clip arriving each second.
-        var rate = (clip.Ready - firstReady) / watched;
-        var needed = rate >= 1 ? TimeSpan.Zero : (Duration - position) * (1 - rate);
-        needed = needed > lead ? needed : lead;
-        if (ahead >= needed)
+        var perSecond = (clip.BytesRead - firstBytes) / watched.TotalSeconds;
+        if (perSecond <= 0)
         {
-            return true;
+            return false;
         }
 
-        StartsIn = rate > 0 ? (needed - ahead) / rate : null;
-        return false;
+        var rest = TimeSpan.FromSeconds(Math.Max(0, length - clip.BytesRead) / perSecond);
+        var wait = rest + lead - (Duration - position);
+        if (wait > TimeSpan.Zero)
+        {
+            StartsIn = wait;
+            return false;
+        }
+
+        // The rest is in time; the start must not be on the very edge of what has arrived either.
+        return clip.Ready - position >= lead;
     }
 }
