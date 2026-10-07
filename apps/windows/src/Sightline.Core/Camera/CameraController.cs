@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Diagnostics;
+using Sightline.Core.Playback;
 using Sightline.Protocol.GpSock;
 
 namespace Sightline.Core.Camera;
@@ -317,6 +318,34 @@ public sealed class CameraController : IAsyncDisposable
                 UpdateTransfers(stopped);
             }
         });
+    }
+
+    /// <summary>
+    /// Plays <paramref name="file"/>, a video on the card: it is fetched into <paramref name="cache"/> and read as it
+    /// arrives, so a player can start before all of it is here. One kept from before is read from the cache, and
+    /// the camera is not asked for anything, connected or not.
+    /// </summary>
+    /// <returns>The clip as it arrives; null when it must be fetched and the camera is not connected or is busy.</returns>
+    public CardClip? Play(CameraFile file, ClipCache cache)
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        if (cache.Open(file) is { } kept)
+        {
+            return kept;
+        }
+
+        var clip = new CardClip(file);
+        var fetching = Perform(CameraTask.Playing, connected => FetchAsync(connected, clip, cache));
+        if (fetching is null)
+        {
+            clip.Dispose();
+            return null;
+        }
+
+        // A connection that ended before the fetch began leaves the clip unanswered, as does one lost under it.
+        // Every other end has answered it already, and the first answer stands.
+        _ = fetching.ContinueWith(_ => clip.Failed("The camera was lost before the whole clip arrived."), TaskScheduler.Default);
+        return clip;
     }
 
     /// <summary>Deletes <paramref name="files"/> from the card, highest index first, then reads the card again.</summary>
@@ -807,6 +836,64 @@ public sealed class CameraController : IAsyncDisposable
         SetFiles((await AskAsync(connected, (c, t) => c.GetFileListAsync(t), timing.LongAnswer).ConfigureAwait(false)).ToImmutableList());
     }
 
+    /// <summary>
+    /// Fetches a clip into the cache while it is read. The player letting it go stops it; a refusal, a disk that
+    /// cannot keep it and a file that is no clip each end it with a reason the player shows. None of those says
+    /// anything about the camera, so only the camera's own failures go on to be handled as for any operation.
+    /// </summary>
+    private async Task FetchAsync(Connected connected, CardClip clip, ClipCache cache)
+    {
+        try
+        {
+            RefuseWhileRecording("Stop recording to play a clip from the card.");
+            // Let go before its turn came: there is no need to stop the live picture for it.
+            clip.Stopping.ThrowIfCancellationRequested();
+            await BrowseAsync(connected, () => FetchIntoAsync(connected, clip, cache)).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (clip.Stopping.IsCancellationRequested && !connected.Work.IsCancellationRequested)
+        {
+            clip.Stopped();
+        }
+        catch (Exception failure) when (failure is RefusalException or GpSockRefusedException or SaveFailureException or InvalidDataException)
+        {
+            clip.Failed(failure switch
+            {
+                GpSockRefusedException refused => $"The camera said no: {GpSockRefusedException.Explain(refused.Reason)}.",
+                SaveFailureException => $"This PC could not keep the clip: {failure.Message}",
+                InvalidDataException => $"This file cannot be played. {failure.Message}",
+                _ => failure.Message,
+            });
+        }
+        catch (TimeoutException stalled)
+        {
+            clip.Failed(stalled.Message);
+            throw;
+        }
+    }
+
+    private async Task FetchIntoAsync(Connected connected, CardClip clip, ClipCache cache)
+    {
+        using var pending = OnDisk(() => cache.Start(clip.File));
+        clip.Arriving(pending.Path);
+        try
+        {
+            await WithStallDetectorAsync(connected, async (progressed, token) =>
+            {
+                using var either = CancellationTokenSource.CreateLinkedTokenSource(token, clip.Stopping);
+                using var tee = new ClipTee(pending.Output, clip.Reader);
+                await connected.Session.Control.DownloadAsync(clip.File.Index, tee, new Progress(_ => progressed()), either.Token)
+                    .ConfigureAwait(false);
+            }).ConfigureAwait(false);
+            clip.Reader.Finish();
+            clip.Kept(OnDisk(pending.Keep));
+        }
+        catch
+        {
+            pending.Discard();
+            throw;
+        }
+    }
+
     /// <summary>Runs <paramref name="transfer"/>, failing it if it goes <see cref="ControllerTiming.TransferStall"/> without progress.</summary>
     private async Task WithStallDetectorAsync(Connected connected, Func<Action, CancellationToken, Task> transfer)
     {
@@ -1009,6 +1096,19 @@ public sealed class CameraController : IAsyncDisposable
         catch (GpSockRefusedException)
         {
             return null;
+        }
+    }
+
+    /// <summary>Runs <paramref name="work"/> on this PC's disk, its failures told apart from the camera's.</summary>
+    private static T OnDisk<T>(Func<T> work)
+    {
+        try
+        {
+            return work();
+        }
+        catch (Exception failure) when (failure is IOException or UnauthorizedAccessException)
+        {
+            throw new SaveFailureException(failure.Message, failure);
         }
     }
 

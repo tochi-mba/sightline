@@ -60,7 +60,8 @@ public sealed class CameraWordsTests
     {
         Enum.GetValues<CameraTask>().Select(CameraWords.Task).ShouldBe([
             "Taking a photo", "Starting to record", "Stopping the recording", "Switching mode",
-            "Changing a setting", "Reading the card", "Copying from the card", "Deleting from the card"]);
+            "Changing a setting", "Reading the card", "Copying from the card", "Deleting from the card",
+            "Playing a clip from the card"]);
     }
 
     [Fact]

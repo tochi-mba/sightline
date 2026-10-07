@@ -76,6 +76,7 @@ public static class CameraWords
         CameraTask.ChangingSetting => "Changing a setting",
         CameraTask.ReadingCard => "Reading the card",
         CameraTask.Copying => "Copying from the card",
+        CameraTask.Playing => "Playing a clip from the card",
         _ => "Deleting from the card",
     };
 

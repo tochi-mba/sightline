@@ -24,10 +24,13 @@ internal sealed class ControllerHarness : IAsyncDisposable
     /// <summary>The stream's timings, shortened likewise.</summary>
     public static readonly CameraSessionTiming QuickStream = new(TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(300));
 
-    public ControllerHarness(bool reconnects = true)
+    /// <summary>A transfer that stalls is given up only after a long while, for a test that stops one itself.</summary>
+    public static readonly ControllerTiming Patient = Quick with { TransferStall = TimeSpan.FromSeconds(30) };
+
+    public ControllerHarness(bool reconnects = true, ControllerTiming? timing = null)
     {
         Link = new FakeLink(ReferenceCamera.Fake());
-        Controller = new CameraController(Link, Quick, QuickStream, () => reconnects);
+        Controller = new CameraController(Link, timing ?? Quick, QuickStream, () => reconnects);
         Controller.StateChanged += state =>
         {
             lock (Seen)

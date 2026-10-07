@@ -212,6 +212,9 @@ public enum CameraTask
 
     /// <summary>Deleting from the card.</summary>
     Deleting,
+
+    /// <summary>Fetching a clip from the card to play it.</summary>
+    Playing,
 }
 
 /// <summary>A message for the person about something that just happened.</summary>
