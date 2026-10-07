@@ -28,7 +28,7 @@
               <StackPanel>
                 <TextBlock Classes="eyebrow" Text="{Binding Day}" Margin="0,14,0,8" IsVisible="{Binding FirstOfDay}" />
                 <Border Classes="panel" Padding="10" Margin="0,0,0,8">
-                  <Grid ColumnDefinitions="Auto,12,128,14,*,Auto">
+                  <Grid ColumnDefinitions="Auto,12,128,14,*,Auto,Auto">
                     <CheckBox IsChecked="{Binding Selected}" VerticalAlignment="Center"
                               AutomationProperties.Name="{Binding Description}" />
                     <Border Grid.Column="2" Height="72" CornerRadius="{StaticResource RadiusSmall}" ClipToBounds="True"
@@ -45,6 +45,11 @@
                                  IsVisible="{Binding Transfer, Converter={x:Static ObjectConverters.IsNotNull}}" />
                     </StackPanel>
                     <TextBlock Grid.Column="5" Classes="readout" Text="{Binding Size}" VerticalAlignment="Center" />
+                    <Button Grid.Column="6" Margin="12,0,0,0" VerticalAlignment="Center" Content="Play"
+                            IsVisible="{Binding File.IsVideo}"
+                            AutomationProperties.Name="{Binding Name, StringFormat='Play {0}'}"
+                            Command="{Binding #Files.((vm:LibraryViewModel)DataContext).PlayCommand}"
+                            CommandParameter="{Binding}" />
                   </Grid>
                 </Border>
               </StackPanel>
@@ -53,6 +58,39 @@
         </ItemsControl>
       </ScrollViewer>
     </Grid>
+
+    <!-- A video from the card, playing over the page while it is still being fetched. -->
+    <Panel IsVisible="{Binding Player, Converter={x:Static ObjectConverters.IsNotNull}}">
+      <Border Name="Player" Background="{StaticResource InkBrush}" DataContext="{Binding Player}">
+        <Grid x:DataType="vm:PlayerViewModel" RowDefinitions="Auto,*,Auto,Auto">
+          <Grid.KeyBindings>
+            <KeyBinding Gesture="Space" Command="{Binding PlayPauseCommand}" />
+            <KeyBinding Gesture="Escape" Command="{Binding CloseCommand}" />
+          </Grid.KeyBindings>
+          <Grid ColumnDefinitions="*,Auto" Margin="0,0,0,12">
+            <StackPanel Spacing="2">
+              <TextBlock Classes="title" Text="{Binding Title}" />
+              <TextBlock Name="Format" Classes="muted" Text="{Binding Format}" />
+            </StackPanel>
+            <Button Grid.Column="1" Name="ClosePlayer" Content="Close" VerticalAlignment="Top" Command="{Binding CloseCommand}" />
+          </Grid>
+          <Border Grid.Row="1" Background="Black" CornerRadius="{StaticResource RadiusSmall}" ClipToBounds="True">
+            <Panel>
+              <Image Name="Picture" Source="{Binding Picture}" Stretch="Uniform" />
+              <TextBlock Name="PlayerStatus" Text="{Binding Status}" TextWrapping="Wrap" MaxWidth="460" TextAlignment="Center"
+                         HorizontalAlignment="Center" VerticalAlignment="Center"
+                         IsVisible="{Binding Status, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            </Panel>
+          </Border>
+          <Slider Grid.Row="2" Name="Seek" Margin="0,12,0,0" Minimum="0" Maximum="{Binding Length}" Value="{Binding Position}"
+                  AutomationProperties.Name="Where the clip is" />
+          <Grid Grid.Row="3" ColumnDefinitions="Auto,14,*">
+            <Button Name="PlayPause" Classes="primary" Content="{Binding PlayLabel}" Command="{Binding PlayPauseCommand}" />
+            <TextBlock Grid.Column="2" Name="Time" Classes="readout" Text="{Binding Time}" VerticalAlignment="Center" />
+          </Grid>
+        </Grid>
+      </Border>
+    </Panel>
 
     <!-- Deleting always asks first. -->
     <Border Name="ConfirmDelete" Background="#CC080A09" IsVisible="{Binding ConfirmingDelete}">

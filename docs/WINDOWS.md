@@ -21,6 +21,12 @@ The camera is joined on the adapter the person picks, which the connect panel or
 
 Closing the window while a camera is connected or Sentry is armed leaves Sightline in the tray, when the person allows it (Settings, on by default); with nothing to keep, closing quits. The tray brings the window back, arms or disarms Sentry, says when an alarm last went up, and is the one place to quit. A second start shows the copy already running rather than fighting it for the camera and the adapter.
 
+## Playing a clip from the card
+
+A video on the card plays on the Library page, over the page, while it is still being fetched. The camera has a command for playing a clip itself, and it takes the camera off Wi-Fi (`docs/ACCEPTANCE.md`, C17), so Sightline downloads the clip instead, into a cache it reads as the clip grows: `%LOCALAPPDATA%\REX Technologies\Sightline\Clips`, kept under 2 GB by letting go of the clips played longest ago. A clip played before plays from there, with the camera or without it.
+
+The card is slower than its own clips: a 1080p clip comes off it at a third to two-thirds of the speed it plays (V1). So the player says how long until it can start, and starts once the rest will arrive before it is needed. Pictures are decoded away from the window's thread, the newest waiting while one decodes; the sound plays through waveOut. Closing the player, or leaving the page, stops the fetch, and the camera carries on as it was.
+
 ## Installing and updating
 
 `tools/scripts/package.ps1` builds every download; `docs/RELEASING.md` says how they are published.

@@ -167,6 +167,43 @@ public sealed class LibraryViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task A_video_plays_over_the_page_until_it_is_closed_or_the_page_is_left()
+    {
+        await using var app = new TestApp(Returning);
+        using var shell = await OpenCardAsync(app);
+        var library = shell.Library;
+        var video = library.Items[0];
+
+        library.PlayCommand.CanExecute(library.Items[1]).ShouldBeFalse();
+        library.PlayCommand.CanExecute(null).ShouldBeFalse();
+        library.PlayCommand.CanExecute(video).ShouldBeTrue();
+        library.PlayCommand.Execute(video);
+
+        // This camera's video is no clip, which the player says once the first of it has come.
+        var player = library.Player.ShouldNotBeNull();
+        player.Title.ShouldBe(video.Name);
+        await TestApp.EventuallyAsync(() =>
+        {
+            player.Tick();
+            return player.Status.StartsWith("This file cannot be played.", StringComparison.Ordinal);
+        });
+        player.CloseCommand.Execute(null);
+        library.Player.ShouldBeNull();
+
+        await TestApp.EventuallyAsync(() => library.Idle);
+        library.PlayCommand.Execute(video);
+        library.Player.ShouldNotBeNull();
+        shell.GoCommand.Execute(Page.Live);
+        library.Player.ShouldBeNull();
+
+        // With no camera, a clip never kept on this PC cannot play.
+        await TestApp.EventuallyAsync(() => library.Idle);
+        await app.Controller.DisconnectAsync();
+        library.PlayCommand.Execute(video);
+        library.Player.ShouldBeNull();
+    }
+
+    [AvaloniaFact]
     public async Task Opening_the_page_with_no_camera_or_a_card_already_read_reads_nothing()
     {
         await using var app = new TestApp(Returning);

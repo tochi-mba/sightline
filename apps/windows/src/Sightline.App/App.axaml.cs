@@ -9,8 +9,10 @@ using Sightline.App.Views;
 using Sightline.Core;
 using Sightline.Core.Camera;
 using Sightline.Core.Connectivity;
+using Sightline.Core.Playback;
 using Sightline.Core.Sentry;
 using Sightline.Core.Settings;
+using Sightline.Platform.Windows.Audio;
 using Sightline.Platform.Windows.Install;
 using Sightline.Platform.Windows.Network;
 using Sightline.Platform.Windows.Wlan;
@@ -98,7 +100,9 @@ public sealed class SightlineApplication : Application
             action => Dispatcher.UIThread.Post(action),
             AppVersion.Of(typeof(SightlineApplication)),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Sightline"),
-            Updates: new VelopackUpdateSource());
+            new ClipCache(Path.Combine(DataFolder.Path, "Clips")),
+            Updates: new VelopackUpdateSource(),
+            OpenSound: WaveOutDevice.Open);
         var shell = new ShellViewModel(parts);
 
         return (shell, () =>

@@ -65,6 +65,14 @@ phone and a WireGuard VPN.
 | P19 | A UDP stream keeps going for three minutes with no keepalive | 2026-10-07 | Pass: 854 to 870 packets in every ten seconds for 180 seconds, all from the camera's `server_port`; the SETUP reply names no session timeout |
 | P20 | Every picture of a UDP stream arrives whole | 2026-10-07 | Pass: 61 pictures in five seconds through the app's own socket and reassembler, 0 packets lost, 0 pictures dropped |
 
+## Playing clips from the card
+
+| # | Check | Date | Result |
+| --- | --- | --- | --- |
+| V1 | The Windows app's controller plays a clip off the card as it arrives, and keeps it | 2026-10-07 | Pass: a 9.3 MB clip of 3.9 seconds (1920×1080, 30 fps by its header, 16 kHz mono sound) came off the card at 812 KB/s, a third of the speed it plays. Its header was read 0.14 seconds in and its first picture 1.3 seconds in; it was kept whole, the size the card said, and the live picture came back afterwards. A player stepped alongside started at 6.8 seconds and still had to stop and wait once near the end |
+| V2 | A clip played before plays again from this PC alone | 2026-10-07 | Pass: whole in 0.08 seconds, with nothing asked of the camera |
+| V3 | Closing a clip part-way stops its fetch, and the camera carries on | 2026-10-07 | Pass: let go at 3.4 MB, it stopped in 0.07 seconds and left nothing in the cache; the card was read straight after and the live picture came back. The PC's internet answered afterwards |
+
 ## Command line
 
 | # | Check | Date | Result |

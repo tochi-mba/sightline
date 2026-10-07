@@ -155,6 +155,34 @@ public sealed class MainWindowTests
     }
 
     [AvaloniaFact]
+    public async Task A_video_on_the_card_plays_over_the_page_and_closes()
+    {
+        await using var app = App(Returning);
+        app.Control.AddFile('A', new DateTime(2026, 10, 4, 18, 35, 0), TestPictures.Clip());
+        using var shell = new ShellViewModel(app.Parts);
+        var window = Show(shell);
+        await app.ConnectedAsync();
+        app.Control.IsStreaming = false;
+        Click(Find<Button>(window, "LibraryTab"));
+        await UntilAsync(() => Find<ItemsControl>(window, "Files").ItemCount == 1 && shell.Library.Idle);
+        Shown(Find<Border>(window, "Player")).ShouldBeFalse();
+
+        Click(Find<ItemsControl>(window, "Files").GetVisualDescendants().OfType<Button>().Single(b => Equals(b.Content, "Play")));
+        await UntilAsync(() =>
+        {
+            shell.Library.Player?.Tick();
+            return Find<Image>(window, "Picture").Source is not null;
+        });
+
+        Shown(Find<Border>(window, "Player")).ShouldBeTrue();
+        Find<TextBlock>(window, "Format").Text.ShouldBe("1920×1080 · 4 fps");
+        Find<TextBlock>(window, "Time").Text.ShouldBe("0:00 / 0:01");
+        Click(Find<Button>(window, "ClosePlayer"));
+        Shown(Find<Border>(window, "Player")).ShouldBeFalse();
+        window.Close();
+    }
+
+    [AvaloniaFact]
     public async Task A_notice_shows_in_its_bar_and_what_is_new_shows_on_top()
     {
         await using var app = new TestApp(

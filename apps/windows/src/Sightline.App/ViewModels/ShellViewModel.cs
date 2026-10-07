@@ -185,6 +185,11 @@ public sealed partial class ShellViewModel : ObservableObject, IDisposable
         {
             Library.Opened();
         }
+        else
+        {
+            // The player belongs to the Library page: leaving it closes the clip, so nothing plays unseen.
+            Library.ClosePlayer();
+        }
     }
 
     [RelayCommand]

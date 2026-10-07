@@ -2,10 +2,12 @@ using Avalonia.Media.Imaging;
 using Sightline.App.Services;
 using Sightline.Core.Camera;
 using Sightline.Core.Connectivity;
+using Sightline.Core.Playback;
 using Sightline.Core.Sentry;
 using Sightline.Core.Settings;
 using Sightline.Core.Updates;
 using Sightline.Platform.Windows.Install;
+using Sightline.Protocol.Media;
 
 namespace Sightline.App.ViewModels;
 
@@ -31,8 +33,11 @@ public interface IDesktop
 /// <param name="Post">Runs an action on the window's thread.</param>
 /// <param name="Version">This build's version.</param>
 /// <param name="SnapshotFolder">Where snapshots of the live picture go.</param>
+/// <param name="Clips">Where clips played from the card are kept for next time.</param>
 /// <param name="Notes">What's new in each version; the curated notes when null.</param>
 /// <param name="Updates">Where newer versions come from; none, as for a build run from source, when null.</param>
+/// <param name="OpenSound">Opens this PC's sound for a clip's, or says there is none; clips play silent when null.</param>
+/// <param name="Clock">The clock players keep time by; the system's when null.</param>
 public sealed record AppParts(
     CameraController Controller,
     CameraChoice Choice,
@@ -45,5 +50,8 @@ public sealed record AppParts(
     Action<Action> Post,
     string Version,
     string SnapshotFolder,
+    ClipCache Clips,
     IReadOnlyList<WhatsNewEntry>? Notes = null,
-    IUpdateSource? Updates = null);
+    IUpdateSource? Updates = null,
+    Func<AviSound, ISoundDevice?>? OpenSound = null,
+    TimeProvider? Clock = null);

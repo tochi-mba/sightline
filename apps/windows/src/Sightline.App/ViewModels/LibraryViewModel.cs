@@ -72,8 +72,8 @@ public sealed partial class CardItem : ObservableObject, IDisposable
 }
 
 /// <summary>
-/// The camera's card: its files by day with their thumbnails, copying them to this PC, and deleting them
-/// from the card after a confirmation.
+/// The camera's card: its files by day with their thumbnails, playing its videos, copying them to this PC, and
+/// deleting them from the card after a confirmation.
 /// </summary>
 public sealed partial class LibraryViewModel : ObservableObject, IDisposable
 {
@@ -104,7 +104,7 @@ public sealed partial class LibraryViewModel : ObservableObject, IDisposable
 
     /// <summary>Whether the camera is free for another command.</summary>
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(RefreshCommand), nameof(CopyCommand), nameof(DeleteCommand), nameof(ConfirmDeleteCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand), nameof(CopyCommand), nameof(DeleteCommand), nameof(ConfirmDeleteCommand), nameof(PlayCommand))]
     private bool idle;
 
     /// <summary>How many files are picked.</summary>
@@ -116,6 +116,10 @@ public sealed partial class LibraryViewModel : ObservableObject, IDisposable
     /// <summary>Whether the delete confirmation shows.</summary>
     [ObservableProperty]
     private bool confirmingDelete;
+
+    /// <summary>The clip playing over the page; null when none is.</summary>
+    [ObservableProperty]
+    private PlayerViewModel? player;
 
     /// <summary>The copy button's label.</summary>
     public string CopyLabel => $"Copy {SelectedCount} to this PC";
@@ -138,9 +142,18 @@ public sealed partial class LibraryViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>Closes the player, which stops fetching its clip if it still is.</summary>
+    public void ClosePlayer()
+    {
+        var closing = Player;
+        Player = null;
+        closing?.Dispose();
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
+        ClosePlayer();
         foreach (var item in Items)
         {
             item.PropertyChanged -= OnItemChanged;
@@ -181,7 +194,12 @@ public sealed partial class LibraryViewModel : ObservableObject, IDisposable
 
     private void Rebuild(IReadOnlyList<CameraFile>? files)
     {
-        Dispose();
+        foreach (var item in Items)
+        {
+            item.PropertyChanged -= OnItemChanged;
+            item.Dispose();
+        }
+
         Items.Clear();
         shown = files;
         foreach (var (day, onDay) in CardWords.ByDay(files ?? []))
@@ -220,6 +238,19 @@ public sealed partial class LibraryViewModel : ObservableObject, IDisposable
 
     [RelayCommand(CanExecute = nameof(CanRefresh))]
     private void Refresh() => parts.Controller.RefreshLibrary();
+
+    private bool CanPlay(CardItem? item) => item is { File.IsVideo: true } && Idle;
+
+    /// <summary>Plays a video over the page: from this PC when it was played before, otherwise as it comes off the card.</summary>
+    [RelayCommand(CanExecute = nameof(CanPlay))]
+    private void Play(CardItem? item)
+    {
+        if (parts.Controller.Play(item!.File, parts.Clips) is { } clip)
+        {
+            ClosePlayer();
+            Player = new PlayerViewModel(clip, parts, ClosePlayer);
+        }
+    }
 
     private bool CanUsePicked() => SelectedCount > 0 && Idle;
 

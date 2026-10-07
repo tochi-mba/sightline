@@ -4,6 +4,7 @@ using Sightline.App.ViewModels;
 using Sightline.Core;
 using Sightline.Core.Camera;
 using Sightline.Core.Connectivity;
+using Sightline.Core.Playback;
 using Sightline.Core.Sentry;
 using Sightline.Core.Settings;
 using Sightline.Core.Testing;
@@ -53,7 +54,7 @@ internal sealed class TestApp : IAsyncDisposable
         Sentry = new SentryRunner(Controller, () => Preferences.Current.Sentry, Alarms, LumaSampler.Grid);
         Parts = new AppParts(
             Controller, Choice, Preferences, new CameraFinder(Wlan, Network), Sentry, Alarms, Desktop,
-            Decode, post ?? Post, "0.2.0", Path.Combine(Folder, "snapshots"), notes);
+            Decode, post ?? Post, "0.2.0", Path.Combine(Folder, "snapshots"), new ClipCache(Path.Combine(Folder, "clips")), notes);
     }
 
     public string Folder { get; } = Path.Combine(Path.GetTempPath(), "sightline-app-" + Guid.NewGuid().ToString("N"));
@@ -174,6 +175,15 @@ internal static class TestPictures
         using var data = bitmap.Encode(SKEncodedImageFormat.Jpeg, 90);
         return data.ToArray();
     }
+
+    /// <summary>
+    /// A clip shaped like the camera's: <paramref name="pictures"/> grey pictures at four a second, with half a
+    /// second of sound after every two. Pictures that only look like JPEGs to the clip's reader when asked.
+    /// </summary>
+    public static byte[] Clip(int pictures = 4, bool withSound = true, bool decodable = true) => (FakeClip.Reference(
+        [.. Enumerable.Range(0, pictures).Select(i => decodable ? Jpeg((byte)(40 * i)) : FakeRtspCamera.Jpeg(300))],
+        withSound ? [.. Enumerable.Range(0, pictures / 2).Select(_ => new byte[16_000])] : [])
+        with { MicrosPerFrame = 250_000, Rate = 4, PicturesPerSound = 2 }).Build();
 
     /// <summary>
     /// A grey scene with a bright block on the left or the right: what someone crossing the picture looks
