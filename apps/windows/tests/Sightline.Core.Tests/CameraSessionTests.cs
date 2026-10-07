@@ -197,7 +197,9 @@ public sealed class CameraSessionTests : IAsyncDisposable
         stream.StreamStarted = () => false;
         await using var session = await OpenAsync(Paced);
         var waiting = session.GrabFrameAsync(TimeSpan.FromSeconds(30));
-        await EventuallyAsync(() => stream.Verbs.Contains("PLAY"));
+        // Streaming, not merely asked to: the opener goes out only once PLAY has been answered. Hanging up
+        // between asking and the answer is a start that failed, which is another test.
+        await EventuallyAsync(() => sockets.Opened.Count > 0 && sockets.Opened[0].Sent.Count > 0);
 
         stream.HangUp();
 
